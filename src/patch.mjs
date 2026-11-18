@@ -166,11 +166,11 @@ export const patchRouterSource = (source) => {
         out = out.replace(sfxAnchor, `${sfxAnchor}globalThis.__trafficityPlayUiSfx=(...args)=>y(...args);`);
     }
 
-    const f5Anchor = 'r("f5Ojv",function(t,n){e(t.exports,"rollBackLastConfirmInOpenGroup",()=>C),e(t.exports,"undoLastAction",()=>k);';
-    if (out.includes(f5Anchor)) {
+    const f5Regex = /r\("f5Ojv",function\(t,n\)\{e\(t\.exports,"rollBackLastConfirmInOpenGroup",\(\)=>([A-Za-z0-9_$]+)\),e\(t\.exports,"undoLastAction",\(\)=>([A-Za-z0-9_$]+)\);/;
+    if (f5Regex.test(out)) {
         out = out.replace(
-            f5Anchor,
-            'r("f5Ojv",function(t,n){e(t.exports,"rollBackLastConfirmInOpenGroup",()=>C),e(t.exports,"undoLastAction",()=>k),e(t.exports,"applyUndoSubRecord",()=>L),e(t.exports,"validateUndoSubRecord",()=>I);globalThis.__trafficityUndoModule=t.exports;globalThis.dispatchEvent&&globalThis.dispatchEvent(new CustomEvent("trafficity:undo-ready"));',
+            f5Regex,
+            'r("f5Ojv",function(t,n){e(t.exports,"rollBackLastConfirmInOpenGroup",()=>$1),e(t.exports,"undoLastAction",()=>$2),e(t.exports,"applyUndoSubRecord",()=>L),e(t.exports,"validateUndoSubRecord",()=>I);globalThis.__trafficityUndoModule=t.exports;globalThis.dispatchEvent&&globalThis.dispatchEvent(new CustomEvent("trafficity:undo-ready"));',
         );
     }
 

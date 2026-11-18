@@ -1,6 +1,6 @@
 # AGENTS.md — Trafficity Reverse Engineering Findings & Repo Guide
 
-This file documents the observed architecture of **Trafficity** (Steam App ID `5185750`, Build `26743311`) and how `trafficity-mod-manager` integrates with it.
+This file documents the observed architecture of **Trafficity** (Steam App ID `5185750`, Build `26757030`, release `trafficity@1.0.0+a7671b7e7a`) and how `trafficity-mod-manager` integrates with it.
 
 ## Target Game Findings (`Trafficity`)
 
@@ -38,6 +38,7 @@ This file documents the observed architecture of **Trafficity** (Steam App ID `5
   - Existing APIs: `/api/dev-saves`, `/api/player-settings`, `/api/autosave-registry`, `/api/player-saves`, `/dev-saves/<id>.json`.
 - **`player-saves/store.js`:** `getPlayerSavesDir()` resolves `AppData/Roaming/Trafficity/saves` (overrideable via `TRAFFICITY_SAVES_DIR`).
 - **`dist/index.html`:** Uses `<script type="importmap">` and loads `<script type="module" src="/transit-city-game.28c230a9.js"></script>`.
+- **Build `26757030` Notes (`Router.24c29017.js`):** Parcel renamed minified internal export aliases (e.g., `undoLastAction` `()=>k` → `()=>T` in `f5Ojv`), so `patchRouterSource` must match minified symbol names via regex rather than hardcoded single-letter aliases. `bTgKI` also gained `computeAreaDeletionCrossableRefund`, and `5pxKp` / `aFL2A` / `8Wq5B` were added for lane token frontage, congestion, and junction passing-path loop checks.
 
 ---
 

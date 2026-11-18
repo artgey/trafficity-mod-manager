@@ -168,11 +168,23 @@ const listMods = async (modsDir) => {
 
 const createModRequestHandler = ({ rootDir, getPlayerSavesDir }) => {
     const loaderPath = path.join(rootDir, "electron", "mod-loader.js");
+    const errorReportingPath = path.join(rootDir, "dist", "error-reporting.json");
+
+    const readGameRelease = async () => {
+        try {
+            const raw = await fsp.readFile(errorReportingPath, "utf-8");
+            const parsed = JSON.parse(raw);
+            return typeof parsed.release === "string" ? parsed.release : null;
+        } catch {
+            return null;
+        }
+    };
 
     return async (req, res, url) => {
         if (url.pathname === "/api/mods" && req.method === "GET") {
             const modsDir = await resolveModsDir(getPlayerSavesDir);
             const data = await listMods(modsDir);
+            data.gameRelease = await readGameRelease();
             if (url.searchParams.get("enabled") === "1") {
                 data.mods = data.mods.filter((m) => m.enabled && !m.error);
             }

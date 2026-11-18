@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import asar from "@electron/asar";
-import { patchAsar, restoreAsar } from "../src/patch.mjs";
+import { patchAsar, patchRouterSource, restoreAsar } from "../src/patch.mjs";
 
 const require = createRequire(import.meta.url);
 const { createModRequestHandler } = require("../src/mod-api.cjs");
@@ -97,7 +97,12 @@ test("mod-api serves mod catalog, toggles state, and blocks path traversal", asy
     try {
         const rootDir = path.join(tmp, "app");
         await fsp.mkdir(path.join(rootDir, "electron"), { recursive: true });
+        await fsp.mkdir(path.join(rootDir, "dist"), { recursive: true });
         await fsp.writeFile(path.join(rootDir, "electron", "mod-loader.js"), "console.log('loader');");
+        await fsp.writeFile(
+            path.join(rootDir, "dist", "error-reporting.json"),
+            JSON.stringify({ release: "trafficity@1.0.0+a7671b7e7a" }),
+        );
 
         const modFolder = path.join(modsDir, "arrow-pan-mod");
         await fsp.mkdir(modFolder, { recursive: true });
@@ -131,12 +136,13 @@ test("mod-api serves mod catalog, toggles state, and blocks path traversal", asy
         const baseUrl = `http://127.0.0.1:${port}`;
 
         try {
-            // 1. Initial list (disabled by default)
+            // 1. Initial list (disabled by default) + gameRelease
             const listRes = await fetch(`${baseUrl}/api/mods`);
             assert.equal(listRes.status, 200);
             const listJson = await listRes.json();
             assert.equal(listJson.mods.length, 1);
             assert.equal(listJson.mods[0].enabled, false);
+            assert.equal(listJson.gameRelease, "trafficity@1.0.0+a7671b7e7a");
 
             // 2. Toggle on
             const toggleRes = await fetch(`${baseUrl}/api/mods/toggle`, {
@@ -231,4 +237,17 @@ test("loader cycleToolbeltSlot skips exhausted and disabled slots", async () => 
         delete globalThis.document;
         delete globalThis.XMLHttpRequest;
     }
+});
+
+test("patchRouterSource matches renamed undoLastAction export symbols", () => {
+    const mockRouter = [
+        "var n=globalThis,i=n.parcelRequireeccb,r=i.register;",
+        'r("f5Ojv",function(t,n){e(t.exports,"rollBackLastConfirmInOpenGroup",()=>C),e(t.exports,"undoLastAction",()=>T);var p=i("c5qGK"),f=i("duUfw");});',
+    ].join("\n");
+    const patched = patchRouterSource(mockRouter);
+    assert.equal(patched.includes("__trafficityRouterRequire"), true);
+    assert.equal(patched.includes("__trafficityUndoModule"), true);
+    assert.equal(patched.includes("()=>T"), true);
+    assert.equal(patched.includes("__trafficityUndoHistory"), true);
+    assert.equal(patchRouterSource(patched), patched);
 });

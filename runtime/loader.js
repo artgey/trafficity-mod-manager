@@ -388,6 +388,7 @@
                 lanePointSpacing: b && typeof b.LANE_POINT_SPACING === "number" ? b.LANE_POINT_SPACING : 10,
             };
         },
+        getGameRelease: () => catalog.gameRelease || null,
     };
 
     const api = {
