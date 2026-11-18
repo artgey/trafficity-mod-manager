@@ -1,0 +1,14 @@
+{
+  "name": "trafficity-mod-manager",
+  "version": "1.0.0",
+  "description": "Lightweight mod manager, mod loader, and ASAR patcher for Trafficity",
+  "type": "module",
+  "scripts": {
+    "patch": "node src/patch.mjs",
+    "restore": "node src/patch.mjs --restore",
+    "test": "node --test test/*.test.mjs examples/*/*.test.mjs"
+  },
+  "dependencies": {
+    "@electron/asar": "^3.2.18"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "measuring-grid",
+  "name": "Measuring Grid Overlay",
+  "version": "1.0.0",
+  "author": "Trafficity Mod Manager",
+  "description": "Togglable always-on world measuring grid (Alt+G) synced to camera pan/zoom with adjustable LANE_WIDTH granularity ([ and ]).",
+  "entry": "mod.js",
+  "styles": ["style.css"]
+}

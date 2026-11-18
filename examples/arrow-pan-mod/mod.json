@@ -1,0 +1,8 @@
+{
+  "id": "arrow-pan-mod",
+  "name": "Arrow Keys Quick-Cancel",
+  "version": "1.0.0",
+  "author": "Trafficity Mod Manager",
+  "description": "Example mod binding Space to Escape quick-cancel via TrafficityMods.bindKey.",
+  "entry": "mod.js"
+}
