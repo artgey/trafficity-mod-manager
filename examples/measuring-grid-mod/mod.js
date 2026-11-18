@@ -1,15 +1,28 @@
 const mods = typeof window !== "undefined" ? window.TrafficityMods : null;
 
-export const GRANULARITY_PRESETS = [0.5, 1, 2, 4, 8, 16];
+export const GRANULARITY_PRESETS = [
+    { kind: "step", mult: 1, majorEvery: 5, label: "1× Step" },
+    { kind: "step", mult: 2, majorEvery: 5, label: "2× Step" },
+    { kind: "step", mult: 5, majorEvery: 4, label: "5× Step" },
+    { kind: "lane", mult: 1, majorEvery: 4, label: "1× Lane" },
+    { kind: "lane", mult: 2, majorEvery: 4, label: "2× Lane" },
+    { kind: "lane", mult: 4, majorEvery: 4, label: "4× Lane" },
+    { kind: "lane", mult: 8, majorEvery: 4, label: "8× Lane" },
+];
+
+export const snapWorldCoord = (value, stepWorld) => {
+    if (!stepWorld || stepWorld <= 0) return value;
+    return Math.round(value / stepWorld) * stepWorld;
+};
 
 export const computeGridLines = ({ camX, camY, zoom, width, height, stepWorld, majorEvery = 4 }) => {
     if (!zoom || zoom <= 0 || !stepWorld || stepWorld <= 0 || width <= 0 || height <= 0) {
         return { vertical: [], horizontal: [], effectiveStepWorld: stepWorld };
     }
 
-    // Automatically double stepWorld if minor lines would be denser than 8px on screen
+    // Automatically double stepWorld if minor lines would be denser than 4px on screen
     let effectiveStep = stepWorld;
-    while (effectiveStep * zoom < 8) {
+    while (effectiveStep * zoom < 4) {
         effectiveStep *= 2;
     }
 
@@ -41,24 +54,54 @@ export const computeGridLines = ({ camX, camY, zoom, width, height, stepWorld, m
 export const createMeasuringGridController = (game, configApi) => {
     const saved = configApi.getConfig("measuring-grid") || {};
     let enabled = Boolean(saved.enabled);
+    let snapEnabled = Boolean(saved.snapEnabled);
     let presetIndex =
         typeof saved.presetIndex === "number" && saved.presetIndex >= 0 && saved.presetIndex < GRANULARITY_PRESETS.length
             ? saved.presetIndex
-            : 2; // Default 2x LANE_WIDTH
+            : 0; // Default: 1x road step (LANE_POINT_SPACING = 3)
 
     let rafId = null;
     let canvas = null;
     let hud = null;
+    let hookedSnapModule = null;
 
     const saveState = () => {
-        configApi.setConfig("measuring-grid", { enabled, presetIndex });
+        configApi.setConfig("measuring-grid", { enabled, snapEnabled, presetIndex });
     };
 
-    const getMultiplier = () => GRANULARITY_PRESETS[presetIndex];
+    const getPreset = () => GRANULARITY_PRESETS[presetIndex];
 
     const getStepWorld = () => {
-        const laneWidth = game.getConstants ? game.getConstants().laneWidth : 14;
-        return laneWidth * getMultiplier();
+        const constants = game.getConstants ? game.getConstants() : { laneWidth: 20, lanePointSpacing: 3 };
+        const preset = getPreset();
+        const base = preset.kind === "step" ? constants.lanePointSpacing : constants.laneWidth;
+        return base * preset.mult;
+    };
+
+    const installSnapHook = () => {
+        const mod = game.getSnapApi ? game.getSnapApi().snapModule : null;
+        if (!mod || hookedSnapModule === mod || typeof mod.getNearestLaneCreationPoint !== "function") {
+            return false;
+        }
+        const prevFn = mod.getNearestLaneCreationPoint;
+        Object.defineProperty(mod, "getNearestLaneCreationPoint", {
+            configurable: true,
+            enumerable: true,
+            value: (gameState, x, y, roadDef, startPoint) => {
+                const res = prevFn(gameState, x, y, roadDef, startPoint);
+                if (!snapEnabled || !res || res.type !== "absolute") {
+                    return res;
+                }
+                const step = getStepWorld();
+                return {
+                    ...res,
+                    x: snapWorldCoord(res.x, step),
+                    y: snapWorldCoord(res.y, step),
+                };
+            },
+        });
+        hookedSnapModule = mod;
+        return true;
     };
 
     const ensureCanvas = () => {
@@ -79,14 +122,20 @@ export const createMeasuringGridController = (game, configApi) => {
     const updateHud = () => {
         if (!hud) return;
         const toggleBtn = hud.querySelector("#tmod-grid-toggle");
+        const snapBtn = hud.querySelector("#tmod-grid-snap");
         const label = hud.querySelector("#tmod-grid-label");
-        const mult = getMultiplier();
+        const preset = getPreset();
+        const step = getStepWorld();
         if (toggleBtn) {
-            toggleBtn.textContent = enabled ? `Grid ${mult}×` : "Grid Off";
+            toggleBtn.textContent = enabled ? `Grid ${preset.label}` : "Grid Off";
             toggleBtn.classList.toggle("tmod-grid-on", enabled);
         }
+        if (snapBtn) {
+            snapBtn.textContent = snapEnabled ? "Snap On" : "Snap Off";
+            snapBtn.classList.toggle("tmod-grid-on", snapEnabled);
+        }
         if (label) {
-            label.textContent = `${mult}×`;
+            label.textContent = `${step}u`;
         }
     };
 
@@ -112,6 +161,7 @@ export const createMeasuringGridController = (game, configApi) => {
                 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 ctx.clearRect(0, 0, cssW, cssH);
 
+                const preset = getPreset();
                 const { vertical, horizontal } = computeGridLines({
                     camX: cam.x,
                     camY: cam.y,
@@ -119,6 +169,7 @@ export const createMeasuringGridController = (game, configApi) => {
                     width: cssW,
                     height: cssH,
                     stepWorld: getStepWorld(),
+                    majorEvery: preset.majorEvery,
                 });
 
                 ctx.lineWidth = 1;
@@ -141,7 +192,7 @@ export const createMeasuringGridController = (game, configApi) => {
                 ctx.stroke();
 
                 ctx.beginPath();
-                ctx.strokeStyle = "rgba(56, 189, 248, 0.42)";
+                ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
                 for (const l of vertical) {
                     if (l.major) {
                         const x = Math.round(l.pos) + 0.5;
@@ -185,6 +236,14 @@ export const createMeasuringGridController = (game, configApi) => {
         return enabled;
     };
 
+    const toggleSnap = () => {
+        installSnapHook();
+        snapEnabled = !snapEnabled;
+        saveState();
+        updateHud();
+        return snapEnabled;
+    };
+
     const stepPreset = (delta) => {
         const next = Math.max(0, Math.min(GRANULARITY_PRESETS.length - 1, presetIndex + delta));
         if (next !== presetIndex) {
@@ -201,12 +260,14 @@ export const createMeasuringGridController = (game, configApi) => {
         hud.id = "tmod-measuring-grid-hud";
         hud.innerHTML = `
             <button id="tmod-grid-toggle" title="Toggle Measuring Grid (Alt+G)">Grid Off</button>
+            <button id="tmod-grid-snap" title="Toggle Road Grid Snap (Alt+S)">Snap Off</button>
             <button id="tmod-grid-minus" title="Finer Grid ([)">-</button>
-            <span id="tmod-grid-label">2×</span>
+            <span id="tmod-grid-label">3u</span>
             <button id="tmod-grid-plus" title="Coarser Grid (])">+</button>
         `;
         document.body.appendChild(hud);
         hud.querySelector("#tmod-grid-toggle").addEventListener("click", toggle);
+        hud.querySelector("#tmod-grid-snap").addEventListener("click", toggleSnap);
         hud.querySelector("#tmod-grid-minus").addEventListener("click", () => stepPreset(-1));
         hud.querySelector("#tmod-grid-plus").addEventListener("click", () => stepPreset(1));
         syncLoop();
@@ -214,11 +275,14 @@ export const createMeasuringGridController = (game, configApi) => {
 
     return {
         toggle,
+        toggleSnap,
         stepPreset,
+        installSnapHook,
         mountHud,
         isEnabled: () => enabled,
+        isSnapEnabled: () => snapEnabled,
         getPresetIndex: () => presetIndex,
-        getMultiplier,
+        getPreset,
         getStepWorld,
     };
 };
@@ -229,10 +293,24 @@ if (mods && mods.game) {
         setConfig: (id, cfg) => mods.setConfig(id, cfg),
     });
 
+    if (!controller.installSnapHook()) {
+        const timer = setInterval(() => {
+            if (controller.installSnapHook()) {
+                clearInterval(timer);
+            }
+        }, 100);
+        window.addEventListener("load", () => {
+            if (controller.installSnapHook()) {
+                clearInterval(timer);
+            }
+        }, { once: true });
+    }
+
     if (document.body) controller.mountHud();
     else window.addEventListener("DOMContentLoaded", () => controller.mountHud(), { once: true });
 
     mods.bindKey("Alt+g", () => controller.toggle());
+    mods.bindKey("Alt+s", () => controller.toggleSnap());
     mods.bindKey("BracketLeft", () => controller.stepPreset(-1));
     mods.bindKey("BracketRight", () => controller.stepPreset(1));
 }

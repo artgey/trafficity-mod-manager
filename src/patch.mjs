@@ -170,7 +170,7 @@ export const patchRouterSource = (source) => {
     if (f5Regex.test(out)) {
         out = out.replace(
             f5Regex,
-            'r("f5Ojv",function(t,n){e(t.exports,"rollBackLastConfirmInOpenGroup",()=>$1),e(t.exports,"undoLastAction",()=>$2),e(t.exports,"applyUndoSubRecord",()=>L),e(t.exports,"validateUndoSubRecord",()=>I);globalThis.__trafficityUndoModule=t.exports;globalThis.dispatchEvent&&globalThis.dispatchEvent(new CustomEvent("trafficity:undo-ready"));',
+            'r("f5Ojv",function(t,n){e(t.exports,"rollBackLastConfirmInOpenGroup",()=>$1),e(t.exports,"undoLastAction",()=>$2),e(t.exports,"applyUndoSubRecord",()=>L),e(t.exports,"validateUndoSubRecord",()=>I);globalThis.__trafficityUndoModule=t.exports;globalThis.dispatchEvent&&queueMicrotask(()=>globalThis.dispatchEvent(new CustomEvent("trafficity:undo-ready")));',
         );
     }
 

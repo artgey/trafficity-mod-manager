@@ -111,10 +111,19 @@ export const createRedoController = () => {
 
     const installUndoHook = () => {
         const { undoModule: mod } = readUndoApi();
-        if (!mod || hookedModule === mod || typeof mod.undoLastAction !== "function") {
+        if (!mod || hookedModule === mod) {
+            return hookedModule === mod && Boolean(mod);
+        }
+        let origUndo;
+        try {
+            origUndo = mod.undoLastAction;
+        } catch {
+            // f5Ojv module bindings may still be in TDZ during synchronous init
             return false;
         }
-        const origUndo = mod.undoLastAction;
+        if (typeof origUndo !== "function") {
+            return false;
+        }
         Object.defineProperty(mod, "undoLastAction", {
             configurable: true,
             enumerable: true,
@@ -212,9 +221,20 @@ export const createRedoController = () => {
 const mods = getMods();
 if (mods) {
     const controller = createRedoController();
-    controller.installUndoHook();
-    window.addEventListener("trafficity:undo-ready", () => controller.installUndoHook());
-    window.addEventListener("load", () => controller.installUndoHook(), { once: true });
+    if (!controller.installUndoHook()) {
+        const timer = setInterval(() => {
+            if (controller.installUndoHook()) {
+                clearInterval(timer);
+            }
+        }, 100);
+        const onReady = () => {
+            if (controller.installUndoHook()) {
+                clearInterval(timer);
+            }
+        };
+        window.addEventListener("trafficity:undo-ready", onReady);
+        window.addEventListener("load", onReady, { once: true });
+    }
 
     mods.provide("redo", {
         redo: controller.redo,

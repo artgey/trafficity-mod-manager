@@ -1,9 +1,10 @@
 {
   "id": "measuring-grid",
-  "name": "Measuring Grid Overlay",
-  "version": "1.0.0",
+  "name": "Measuring Grid & Snap Overlay",
+  "version": "1.1.0",
   "author": "Trafficity Mod Manager",
-  "description": "Togglable always-on world measuring grid (Alt+G) synced to camera pan/zoom with adjustable LANE_WIDTH granularity ([ and ]).",
+  "description": "Togglable world measuring grid (Alt+G) calibrated to road step spacing (3u) and lane width (20u), with [ and ] granularity controls and optional Alt+S road-point snapping.",
+  "optionalDependencies": ["snap-perf-fix"],
   "entry": "mod.js",
   "styles": ["style.css"]
 }

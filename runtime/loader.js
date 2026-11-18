@@ -384,8 +384,8 @@
         getConstants: () => {
             const b = game.requireRouterModule("bTgKI");
             return {
-                laneWidth: b && typeof b.LANE_WIDTH === "number" ? b.LANE_WIDTH : 14,
-                lanePointSpacing: b && typeof b.LANE_POINT_SPACING === "number" ? b.LANE_POINT_SPACING : 10,
+                laneWidth: b && typeof b.LANE_WIDTH === "number" ? b.LANE_WIDTH : 20,
+                lanePointSpacing: b && typeof b.LANE_POINT_SPACING === "number" ? b.LANE_POINT_SPACING : 3,
             };
         },
         getGameRelease: () => catalog.gameRelease || null,
