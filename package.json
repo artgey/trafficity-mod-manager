@@ -1,12 +1,15 @@
 {
   "name": "trafficity-mod-manager",
-  "version": "1.0.0",
-  "description": "Lightweight mod manager, mod loader, and ASAR patcher for Trafficity",
+  "version": "1.3.0",
+  "description": "Lightweight mod manager, extensible game facade, ASAR patcher, and Qt6 Quick desktop UI for Trafficity",
   "type": "module",
   "scripts": {
     "patch": "node src/patch.mjs",
     "restore": "node src/patch.mjs --restore",
-    "test": "node --test test/*.test.mjs examples/*/*.test.mjs"
+    "status": "node src/patch.mjs --status",
+    "test": "node --test test/*.test.mjs examples/*/*.test.mjs",
+    "build:ui": "mkdir -p ui/build bin && cd ui/build && qmake6 ../trafficity-mod-manager.pro && make -j$(nproc) && cp trafficity-mod-manager ../../bin/trafficity-mod-manager",
+    "app": "./bin/trafficity-mod-manager"
   },
   "dependencies": {
     "@electron/asar": "^3.2.18"

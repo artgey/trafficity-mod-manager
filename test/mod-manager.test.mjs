@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import asar from "@electron/asar";
-import { patchAsar, patchRouterSource, restoreAsar } from "../src/patch.mjs";
+import { patchAsar, patchRouterSource, restoreAsar, verifyRouterHooks } from "../src/patch.mjs";
 
 const require = createRequire(import.meta.url);
 const { createModRequestHandler } = require("../src/mod-api.cjs");
@@ -239,15 +239,27 @@ test("loader cycleToolbeltSlot skips exhausted and disabled slots", async () => 
     }
 });
 
-test("patchRouterSource matches renamed undoLastAction export symbols", () => {
+test("patchRouterSource matches renamed minified identifiers across all required Router hooks", () => {
     const mockRouter = [
-        "var n=globalThis,i=n.parcelRequireeccb,r=i.register;",
-        'r("f5Ojv",function(t,n){e(t.exports,"rollBackLastConfirmInOpenGroup",()=>C),e(t.exports,"undoLastAction",()=>T);var p=i("c5qGK"),f=i("duUfw");});',
+        "var g=globalThis,req=g.parcelRequireabcd,reg=req.register;",
+        'r("lVhdV",function(m,ex){e(m.exports,"playUiSfx",()=>playFn);});',
+        'r("f5Ojv",function(m,ex){e(m.exports,"rollBackLastConfirmInOpenGroup",()=>rbFn),e(m.exports,"undoLastAction",()=>undoFn);var p=i("c5qGK"),uh=i("duUfw");let valFn=(e,t,sub)=>"confirm"===sub.kind?1:0,appFn=(e,t,sub,d)=>{"confirm"===sub.kind?1:0};});',
+        'fnQ=gs=>{gs.mouseIsDown||gs.isModalDialogOpen||(clr(gs),"undone"===(0,um.undoLastAction)(gs,depBag))};',
+        'fn5=(ev,gs)=>{if(fn1(ev,gs),(0,wp.shouldBlockWorldPointer)(gs))return;if(1===ev.button){}};',
+        'fn1=(ev,gs)=>{ev.shiftKey?gs.keysPressed.add("shift"):gs.keysPressed.delete("shift")};',
+        'fnUdp=gs=>{q1=q2;try{innerUdp(gs)}catch(err){console.log("Failed to update draft lane preview:",err)}};',
+        'r("aYVZj",function(m,ex){e(m.exports,"getIntersectionCenterFromRoadEnds",()=>icFn),e(m.exports,"getNearestLaneCreationPoint",()=>gnFn);',
+        'return console.log("junction midpoint snap",{a:1});',
+        "for(let k=1;k<=30;k++){if(prev&&(prev=(0,pt.getPreviousPoint)(ls,prev)),prev){let k=mk(gs,prev,ptObj.lanesWide,0);if(k&&okFn(gs,sp,k))return k}if(nxt&&(nxt=(0,pt.getNextPoint)(ls,nxt)),nxt){let k=mk(gs,nxt,ptObj.lanesWide,0);if(k&&okFn(gs,sp,k))return k}}});",
     ].join("\n");
+
     const patched = patchRouterSource(mockRouter);
-    assert.equal(patched.includes("__trafficityRouterRequire"), true);
-    assert.equal(patched.includes("__trafficityUndoModule"), true);
-    assert.equal(patched.includes("()=>T"), true);
-    assert.equal(patched.includes("__trafficityUndoHistory"), true);
+    const check = verifyRouterHooks(patched);
+    assert.equal(check.ok, true, `Missing hooks: ${check.missing.join(", ")}`);
+    assert.equal(patched.includes("()=>appFn"), true);
+    assert.equal(patched.includes("()=>valFn"), true);
+    assert.equal(patched.includes("()=>undoFn"), true);
+    assert.equal(patched.includes("globalThis.__trafficityRouterRequire=req;"), true);
+    assert.equal(patched.includes("globalThis.__trafficityUndoDeps=depBag;"), true);
     assert.equal(patchRouterSource(patched), patched);
 });
