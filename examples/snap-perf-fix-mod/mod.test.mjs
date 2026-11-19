@@ -25,10 +25,15 @@ test("snap-perf-fix sets search bounds, memoizes unchanged/subpixel calls, and i
         },
     });
 
+    let snapConfig = null;
     globalThis.window = {
         TrafficityMods: {
             game: {
                 getSnapApi: () => ({ snapModule }),
+                configureSnapSearch: (opts) => {
+                    snapConfig = { ...opts };
+                    return snapConfig;
+                },
             },
         },
         addEventListener() {},
@@ -36,9 +41,7 @@ test("snap-perf-fix sets search bounds, memoizes unchanged/subpixel calls, and i
 
     try {
         await import(`./mod.js?t=${Date.now()}`);
-        assert.equal(globalThis.__trafficityMaxSnapSearchSteps, 5);
-        assert.equal(globalThis.__trafficitySnapSearchStride, 3);
-        assert.equal(globalThis.__trafficitySuppressSnapLog, true);
+        assert.deepEqual(snapConfig, { maxSteps: 5, stride: 3, suppressLog: true });
 
         const gs = {
             saveState: { worldRevision: 1, roadPlacementElevation: 0, roadPlacementMode: "straight", angleSnappingEnabled: true },

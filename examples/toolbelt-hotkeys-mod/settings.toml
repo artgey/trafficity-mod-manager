@@ -1,0 +1,57 @@
+# Keybinding settings for Toolbelt Hotkeys & Control Enhancements
+# Edit these combos here, in the F9 in-game drawer, or via Settings in the Mod Manager UI.
+
+[speedPause]
+label = "Pause Speed Key"
+type = "string"
+value = "Alt+1"
+
+[speedNormal]
+label = "Normal Speed Key"
+type = "string"
+value = "Alt+2"
+
+[speedFast]
+label = "Fast Speed Key"
+type = "string"
+value = "Alt+3"
+
+[toggleDelete]
+label = "Cycle Delete Tools Key"
+type = "string"
+value = "q"
+
+[rectDelete]
+label = "Rectangle Delete Key"
+type = "string"
+value = "Delete"
+
+[trafficEraser]
+label = "Traffic Eraser Key"
+type = "string"
+value = "Shift+Delete"
+
+[gridMode]
+label = "Grid Tool Key"
+type = "string"
+value = "g"
+
+[trafficLightsMode]
+label = "Traffic Lights Key"
+type = "string"
+value = "l"
+
+[roundaboutMode]
+label = "Roundabout Key"
+type = "string"
+value = "o"
+
+[keepClearMode]
+label = "Keep Clear Key"
+type = "string"
+value = "k"
+
+[propertyShift]
+label = "Context Property Shift Key"
+type = "string"
+value = "e"

@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const { extractConfigValues, extractSettingsSchema, updateTomlValues } = require("./toml.cjs");
 
 const MIME_TYPES = {
     ".css": "text/css; charset=utf-8",
@@ -124,6 +125,15 @@ const listMods = async (modsDir) => {
             const raw = await fsp.readFile(manifestPath, "utf-8");
             const manifest = JSON.parse(raw);
             const id = typeof manifest.id === "string" && manifest.id.trim() ? manifest.id.trim() : folderName;
+            const settingsTomlPath = path.join(modsDir, folderName, "settings.toml");
+            let settingsSchema = [];
+            let tomlConfig = {};
+            if (fs.existsSync(settingsTomlPath)) {
+                const rawToml = await fsp.readFile(settingsTomlPath, "utf-8");
+                settingsSchema = extractSettingsSchema(rawToml);
+                tomlConfig = extractConfigValues(rawToml);
+            }
+            const legacyConfig = config.configs[id] && typeof config.configs[id] === "object" ? config.configs[id] : {};
 
             mods.push({
                 id,
@@ -141,7 +151,11 @@ const listMods = async (modsDir) => {
                     ? manifest.optionalDependencies.filter((d) => typeof d === "string" && d.trim())
                     : [],
                 enabled: config.enabled[id] === true,
-                config: config.configs[id] && typeof config.configs[id] === "object" ? config.configs[id] : {},
+                hasSettings: fs.existsSync(settingsTomlPath),
+                settingsSchema,
+                forkedFrom: manifest.forkedFrom && typeof manifest.forkedFrom === "object" ? manifest.forkedFrom : null,
+                lineage: Array.isArray(manifest.lineage) ? manifest.lineage : [],
+                config: { ...legacyConfig, ...tomlConfig },
             });
         } catch (err) {
             mods.push({
@@ -212,10 +226,20 @@ const createModRequestHandler = ({ rootDir, getPlayerSavesDir }) => {
                 sendJson(res, 400, { error: "Missing mod id" });
                 return true;
             }
+            const modId = body.id.trim();
+            const nextConfig = body.config && typeof body.config === "object" ? body.config : {};
             const modsDir = await resolveModsDir(getPlayerSavesDir);
-            const config = await readModsConfig(modsDir);
-            config.configs[body.id.trim()] = body.config && typeof body.config === "object" ? body.config : {};
-            await writeModsConfig(modsDir, config);
+            const { mods } = await listMods(modsDir);
+            const targetMod = mods.find((m) => m.id === modId);
+            const settingsTomlPath = targetMod ? path.join(modsDir, targetMod.folder, "settings.toml") : null;
+            if (settingsTomlPath && fs.existsSync(settingsTomlPath)) {
+                const rawToml = await fsp.readFile(settingsTomlPath, "utf-8");
+                await fsp.writeFile(settingsTomlPath, updateTomlValues(rawToml, nextConfig), "utf-8");
+            } else {
+                const config = await readModsConfig(modsDir);
+                config.configs[modId] = nextConfig;
+                await writeModsConfig(modsDir, config);
+            }
             sendJson(res, 200, { ok: true });
             return true;
         }

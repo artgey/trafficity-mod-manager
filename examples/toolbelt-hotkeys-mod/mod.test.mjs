@@ -30,6 +30,7 @@ test("toolbelt-hotkeys implements Plans 1-7 via TrafficityMods.game facade", asy
     let idle = true;
     let undoCalls = 0;
     let redoCalls = 0;
+    let mockGameState = null;
 
     const fakeSlots = [
         { id: "s1", classList: { contains: () => selectedState.has("road") } },
@@ -84,6 +85,7 @@ test("toolbelt-hotkeys implements Plans 1-7 via TrafficityMods.game facade", asy
                     }
                 },
                 getCursorMode: () => cursorMode,
+                getUndoApi: () => ({ gameState: mockGameState }),
                 isIdle: () => idle,
                 sendSyntheticMouse: (type, init) => syntheticMouse.push({ type, ...init }),
                 sendSyntheticWheel: (init) => syntheticWheels.push(init),
@@ -156,7 +158,7 @@ test("toolbelt-hotkeys implements Plans 1-7 via TrafficityMods.game facade", asy
 
         // Plan 6: Left click-and-drag placement in road placement
         cursorMode = "road placement";
-        globalThis.__trafficityGameState = { cursorMode: { mode: "road placement", startPoint: null } };
+        mockGameState = { cursorMode: { mode: "road placement", startPoint: null } };
         mousedown({ button: 0, shiftKey: false, clientX: 10, clientY: 10 });
         mousemove({ clientX: 30, clientY: 10 });
         assert.deepEqual(syntheticMouse.slice(-2), [

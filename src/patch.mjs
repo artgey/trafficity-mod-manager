@@ -334,9 +334,11 @@ export const patchRouterSource = (source) => {
 
 export const applyPatchesToExtractedDir = async (extractedDir) => {
     const modApiSrc = path.join(PROJECT_ROOT, "src", "mod-api.cjs");
+    const tomlSrc = path.join(PROJECT_ROOT, "src", "toml.cjs");
     const loaderSrc = path.join(PROJECT_ROOT, "runtime", "loader.js");
 
     await fsp.copyFile(modApiSrc, path.join(extractedDir, "electron", "mod-api.cjs"));
+    await fsp.copyFile(tomlSrc, path.join(extractedDir, "electron", "toml.cjs"));
     await fsp.copyFile(loaderSrc, path.join(extractedDir, "electron", "mod-loader.js"));
 
     const targets = [

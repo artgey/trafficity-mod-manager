@@ -1,101 +1,101 @@
-const getMods = () => (typeof window !== "undefined" ? window.TrafficityMods : null);
+const getModApi = () => (typeof window !== "undefined" ? window.TrafficityMods : null);
 
-export const fingerprintStartPoint = (sp) => {
-    if (!sp) return "none";
-    if (sp.type === "absolute") return `abs:${sp.x},${sp.y},${sp.elevation},${sp.lanesWide}`;
-    if (sp.locator) return `${sp.type}:${sp.locator.laneSectionId}:${sp.locator.pointIndex}:${sp._gluedToLocatorOn || ""}`;
-    if (Array.isArray(sp.spanEndLocators) && sp.spanEndLocators.length >= 2) {
-        return `mid:${sp.spanEndLocators[0].laneSectionId}:${sp.spanEndLocators[0].pointIndex}:${sp.spanEndLocators[1].laneSectionId}:${sp.spanEndLocators[1].pointIndex}`;
+export const fingerprintStartPoint = (startPoint) => {
+    if (!startPoint) return "none";
+    if (startPoint.type === "absolute") {
+        return `abs:${startPoint.x},${startPoint.y},${startPoint.elevation},${startPoint.lanesWide}`;
     }
-    return String(sp.type || "unknown");
+    if (startPoint.locator) {
+        return `${startPoint.type}:${startPoint.locator.laneSectionId}:${startPoint.locator.pointIndex}:${startPoint._gluedToLocatorOn || ""}`;
+    }
+    if (Array.isArray(startPoint.spanEndLocators) && startPoint.spanEndLocators.length >= 2) {
+        return `mid:${startPoint.spanEndLocators[0].laneSectionId}:${startPoint.spanEndLocators[0].pointIndex}:${startPoint.spanEndLocators[1].laneSectionId}:${startPoint.spanEndLocators[1].pointIndex}`;
+    }
+    return String(startPoint.type || "unknown");
 };
 
 export const createSnapPerfController = (options = {}) => {
     const maxSteps = options.maxSteps ?? 5;
     const stride = options.stride ?? 3;
     let hookedModule = null;
-    let cache = null;
+    let snapCache = null;
 
     const applyTuning = () => {
-        globalThis.__trafficityMaxSnapSearchSteps = maxSteps;
-        globalThis.__trafficitySnapSearchStride = stride;
-        globalThis.__trafficitySuppressSnapLog = true;
+        const modApi = getModApi();
+        if (modApi && modApi.game && typeof modApi.game.configureSnapSearch === "function") {
+            modApi.game.configureSnapSearch({ maxSteps, stride, suppressLog: true });
+        }
     };
 
     const readSnapModule = () => {
-        const m = getMods();
-        if (m && m.game && typeof m.game.getSnapApi === "function") {
-            return m.game.getSnapApi().snapModule;
+        const modApi = getModApi();
+        if (modApi && modApi.game && typeof modApi.game.getSnapApi === "function") {
+            return modApi.game.getSnapApi().snapModule;
         }
-        return globalThis.__trafficitySnapModule || null;
+        return null;
     };
 
     const installHook = () => {
         applyTuning();
-        const mod = readSnapModule();
-        if (!mod || hookedModule === mod || typeof mod.getNearestLaneCreationPoint !== "function") {
+        const snapModule = readSnapModule();
+        if (!snapModule || hookedModule === snapModule || typeof snapModule.getNearestLaneCreationPoint !== "function") {
             return false;
         }
-        const origFn = mod.getNearestLaneCreationPoint;
-        Object.defineProperty(mod, "getNearestLaneCreationPoint", {
+        const originalGetNearestPoint = snapModule.getNearestLaneCreationPoint;
+        Object.defineProperty(snapModule, "getNearestLaneCreationPoint", {
             configurable: true,
             enumerable: true,
-            value: (gameState, x, y, roadDef, startPoint) => {
-                const ss = gameState?.saveState;
-                const key = [
-                    Math.round(x * 2),
-                    Math.round(y * 2),
-                    ss?.worldRevision ?? -1,
-                    roadDef?.name ?? "",
-                    ss?.roadPlacementElevation ?? 0,
-                    ss?.roadPlacementMode ?? "",
-                    ss?.angleSnappingEnabled ? 1 : 0,
+            value: (gameState, worldX, worldY, roadDefinition, startPoint) => {
+                const saveState = gameState?.saveState;
+                const cacheKey = [
+                    Math.round(worldX * 2),
+                    Math.round(worldY * 2),
+                    saveState?.worldRevision ?? -1,
+                    roadDefinition?.name ?? "",
+                    saveState?.roadPlacementElevation ?? 0,
+                    saveState?.roadPlacementMode ?? "",
+                    saveState?.angleSnappingEnabled ? 1 : 0,
                     gameState?.keysPressed?.has?.("shift") ? 1 : 0,
                     fingerprintStartPoint(startPoint),
                 ].join("|");
 
-                if (cache && cache.saveState === ss && cache.key === key) {
+                if (snapCache && snapCache.saveState === saveState && snapCache.cacheKey === cacheKey) {
                     if (gameState) {
-                        gameState.draftMidpointToMidpointNinetySnapActive = cache.ninetySnapActive;
+                        gameState.draftMidpointToMidpointNinetySnapActive = snapCache.ninetySnapActive;
                     }
-                    return cache.result;
+                    return snapCache.result;
                 }
 
-                const result = origFn(gameState, x, y, roadDef, startPoint);
-                cache = {
-                    saveState: ss,
-                    key,
+                const result = originalGetNearestPoint(gameState, worldX, worldY, roadDefinition, startPoint);
+                snapCache = {
+                    saveState,
+                    cacheKey,
                     result,
                     ninetySnapActive: Boolean(gameState?.draftMidpointToMidpointNinetySnapActive),
                 };
                 return result;
             },
         });
-        hookedModule = mod;
+        hookedModule = snapModule;
         return true;
     };
 
     const clearCache = () => {
-        cache = null;
+        snapCache = null;
     };
 
     return { applyTuning, installHook, clearCache };
 };
 
-const mods = getMods();
-if (mods) {
+const modApi = getModApi();
+if (modApi) {
     const controller = createSnapPerfController();
     controller.applyTuning();
     if (!controller.installHook()) {
-        const timer = setInterval(() => {
-            if (controller.installHook()) {
-                clearInterval(timer);
-            }
-        }, 100);
-        window.addEventListener("load", () => {
-            if (controller.installHook()) {
-                clearInterval(timer);
-            }
-        }, { once: true });
+        if (modApi.game && typeof modApi.game.on === "function") {
+            modApi.game.on("ready", () => controller.installHook());
+        } else {
+            window.addEventListener("load", () => controller.installHook(), { once: true });
+        }
     }
 }

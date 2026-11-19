@@ -79,10 +79,10 @@ export const createRedoController = () => {
             return m.game.getUndoApi();
         }
         return {
-            undoModule: globalThis.__trafficityUndoModule || null,
-            undoHistory: globalThis.__trafficityUndoHistory || null,
-            gameState: globalThis.__trafficityGameState || null,
-            undoDeps: globalThis.__trafficityUndoDeps || null,
+            undoModule: null,
+            undoHistory: null,
+            gameState: null,
+            undoDeps: null,
         };
     };
 
@@ -222,18 +222,13 @@ const mods = getMods();
 if (mods) {
     const controller = createRedoController();
     if (!controller.installUndoHook()) {
-        const timer = setInterval(() => {
-            if (controller.installUndoHook()) {
-                clearInterval(timer);
-            }
-        }, 100);
-        const onReady = () => {
-            if (controller.installUndoHook()) {
-                clearInterval(timer);
-            }
-        };
-        window.addEventListener("trafficity:undo-ready", onReady);
-        window.addEventListener("load", onReady, { once: true });
+        if (mods.game && typeof mods.game.on === "function") {
+            mods.game.on("ready", () => controller.installUndoHook());
+        } else {
+            const onReady = () => controller.installUndoHook();
+            window.addEventListener("trafficity:undo-ready", onReady);
+            window.addEventListener("load", onReady, { once: true });
+        }
     }
 
     mods.provide("redo", {
