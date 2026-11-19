@@ -84,7 +84,72 @@ export const extractZipBuffer = async (zipBuffer, destDir) => {
     return extractedFiles;
 };
 
-const LOCAL_REGISTRY_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "registry.json");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const LOCAL_REGISTRY_PATH = path.join(REPO_ROOT, "registry.json");
+const BASE_TYPES_PATH = path.join(REPO_ROOT, "types", "trafficity-mods.d.ts");
+
+export const walkModFiles = async (modDir, { excludeNames = [], excludeExts = [] } = {}) => {
+    const files = [];
+    const skipNames = new Set(["node_modules", ...excludeNames]);
+    const walk = async (rel = "") => {
+        const abs = rel ? path.join(modDir, rel) : modDir;
+        const entries = await fsp.readdir(abs, { withFileTypes: true });
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+        for (const entry of entries) {
+            if (entry.name.startsWith(".") || skipNames.has(entry.name)) continue;
+            const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+            if (entry.isDirectory()) {
+                await walk(childRel);
+            } else if (!excludeExts.some((ext) => entry.name.endsWith(ext))) {
+                files.push(childRel);
+            }
+        }
+    };
+    await walk();
+    return files.sort();
+};
+
+export const computeModCodeHash = async (modDir) => {
+    const files = await walkModFiles(modDir, { excludeNames: ["settings.toml"], excludeExts: [".test.mjs", ".zip"] });
+    const hash = crypto.createHash("sha256");
+    for (const rel of files) {
+        hash.update(rel);
+        hash.update("\0");
+        hash.update(await fsp.readFile(path.join(modDir, rel)));
+        hash.update("\0");
+    }
+    return hash.digest("hex");
+};
+
+export const ensureModsWorkspaceTypes = async (modsDir = resolveDefaultModsDir()) => {
+    await fsp.mkdir(modsDir, { recursive: true });
+    if (fs.existsSync(BASE_TYPES_PATH)) {
+        const typesDir = path.join(modsDir, ".tmod-types");
+        await fsp.mkdir(typesDir, { recursive: true });
+        await fsp.copyFile(BASE_TYPES_PATH, path.join(typesDir, "trafficity-mods.d.ts"));
+    }
+    const jsconfigPath = path.join(modsDir, "jsconfig.json");
+    if (!fs.existsSync(jsconfigPath)) {
+        await fsp.writeFile(
+            jsconfigPath,
+            JSON.stringify(
+                {
+                    compilerOptions: {
+                        target: "ES2022",
+                        module: "ESNext",
+                        moduleResolution: "bundler",
+                        moduleDetection: "force",
+                        allowJs: true,
+                        checkJs: false,
+                    },
+                    include: ["**/*.js", "**/*.mjs", "**/*.d.ts", ".tmod-types/**/*.d.ts"],
+                },
+                null,
+                2,
+            ) + "\n",
+        );
+    }
+};
 
 export const fetchRegistry = async (registryUrl = process.env.TRAFFICITY_REGISTRY_URL || DEFAULT_REGISTRY_URL) => {
     let data;
@@ -138,12 +203,42 @@ export const installModFromZip = async ({ downloadUrl, sha256 = null, id = null,
         }
 
         const manifest = JSON.parse(await fsp.readFile(path.join(modRoot, "mod.json"), "utf-8"));
+        const manifestId = String(manifest.id || id || "mod").trim();
         const targetId = (id || manifest.id || "mod").replace(/[^a-zA-Z0-9._-]/g, "-");
         const finalDir = path.join(modsDir, targetId);
 
-        await fsp.rm(finalDir, { recursive: true, force: true });
         await fsp.mkdir(modsDir, { recursive: true });
+        // Remove any existing folder in modsDir with the same mod id (e.g. *-mod vs *) to prevent duplicates
+        for (const existing of await fsp.readdir(modsDir, { withFileTypes: true })) {
+            if (!existing.isDirectory() || existing.name.startsWith(".tmp-install-")) continue;
+            const existingManifestPath = path.join(modsDir, existing.name, "mod.json");
+            if (!fs.existsSync(existingManifestPath)) continue;
+            try {
+                const existingManifest = JSON.parse(await fsp.readFile(existingManifestPath, "utf-8"));
+                if (String(existingManifest.id || existing.name).trim() === manifestId) {
+                    await fsp.rm(path.join(modsDir, existing.name), { recursive: true, force: true });
+                }
+            } catch {
+                // ignore malformed manifest
+            }
+        }
+        await fsp.rm(finalDir, { recursive: true, force: true });
         await fsp.cp(modRoot, finalDir, { recursive: true });
+        const codeHash = await computeModCodeHash(finalDir);
+        await fsp.writeFile(
+            path.join(finalDir, ".tmod-origin.json"),
+            JSON.stringify(
+                {
+                    source: "registry",
+                    originalId: manifestId,
+                    originalVersion: manifest.version || "1.0.0",
+                    codeHash,
+                },
+                null,
+                2,
+            ) + "\n",
+        );
+        await ensureModsWorkspaceTypes(modsDir);
 
         return { id: targetId, dir: finalDir, manifest };
     } finally {
