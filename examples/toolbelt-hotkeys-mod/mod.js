@@ -1,4 +1,4 @@
-const mods = window.TrafficityMods;
+const modApi = window.TrafficityMods;
 
 const isUiEventTarget = (target) => {
     if (!target || typeof target.closest !== "function") return false;
@@ -10,57 +10,65 @@ const isUiEventTarget = (target) => {
 };
 
 const cycleGridDensity = () => {
-    const panel = document.querySelector(".road-toolbar-controls-panel--visible");
-    if (!panel) return false;
-    const firstRow = panel.querySelector(".road-toolbar-control-row");
+    const controlPanel = document.querySelector(".road-toolbar-controls-panel--visible");
+    if (!controlPanel) return false;
+    const firstRow = controlPanel.querySelector(".road-toolbar-control-row");
     if (!firstRow) return false;
-    const options = Array.from(firstRow.querySelectorAll("button.game-multi-button-option"));
-    if (options.length === 0) return false;
-    const activeIdx = options.findIndex((b) => b.classList && b.classList.contains("game-multi-button-option-selected"));
-    const nextIdx = activeIdx === -1 ? 0 : (activeIdx + 1) % options.length;
-    options[nextIdx].click();
+    const densityOptions = Array.from(firstRow.querySelectorAll("button.game-multi-button-option"));
+    if (densityOptions.length === 0) return false;
+    const activeIndex = densityOptions.findIndex(
+        (optionButton) =>
+            optionButton.classList && optionButton.classList.contains("game-multi-button-option-selected"),
+    );
+    const nextIndex = activeIndex === -1 ? 0 : (activeIndex + 1) % densityOptions.length;
+    densityOptions[nextIndex].click();
     return true;
 };
 
 const isRoadPlacementActive = (game) => {
-    const mode = game.getCursorMode();
-    if (mode === "road placement") return true;
-    if (mode && mode !== "default") return false;
+    const cursorMode = game.getCursorMode();
+    if (cursorMode === "road placement") return true;
+    if (cursorMode && cursorMode !== "default") return false;
     // Fallback when gameState is not yet captured: check if a road slot (non-special) is selected
-    const slots = game.getToolbeltSlots();
+    const toolbeltSlots = game.getToolbeltSlots();
     const specialTargets = new Set(["grid", "traffic-lights", "roundabout", "keep-clear"]);
-    return slots.some((btn) => {
-        if (!btn.classList || !btn.classList.contains("game-multi-button-option-selected")) return false;
-        const wrapper = typeof btn.closest === "function" ? btn.closest("[data-tutorial-target]") : null;
-        const t = wrapper && wrapper.getAttribute ? wrapper.getAttribute("data-tutorial-target") : null;
-        return !t || !specialTargets.has(t);
+    return toolbeltSlots.some((slotButton) => {
+        if (!slotButton.classList || !slotButton.classList.contains("game-multi-button-option-selected")) return false;
+        const wrapper = typeof slotButton.closest === "function" ? slotButton.closest("[data-tutorial-target]") : null;
+        const tutorialTarget = wrapper && wrapper.getAttribute ? wrapper.getAttribute("data-tutorial-target") : null;
+        return !tutorialTarget || !specialTargets.has(tutorialTarget);
     });
 };
 
-if (mods && mods.game) {
-    const { game } = mods;
+if (modApi && modApi.game) {
+    const { game } = modApi;
+    const modConfig = typeof modApi.getConfig === "function" ? modApi.getConfig("toolbelt-hotkeys") || {} : {};
+    const keyFor = (settingKey, fallback) =>
+        typeof modConfig[settingKey] === "string" && modConfig[settingKey].trim()
+            ? modConfig[settingKey].trim()
+            : fallback;
 
-    game.watchToolbelt((slots) => {
-        slots.slice(0, 10).forEach((btn, idx) => {
-            game.addSlotBadge(btn, idx === 9 ? "0" : String(idx + 1));
+    game.watchToolbelt((toolbeltSlots) => {
+        toolbeltSlots.slice(0, 10).forEach((slotButton, slotIndex) => {
+            game.addSlotBadge(slotButton, slotIndex === 9 ? "0" : String(slotIndex + 1));
         });
         game.addButtonHint("rectangle-delete", "Q/Del");
         game.addButtonHint("traffic-eraser", "⇧Del");
     });
 
     // Plan 7 / Toolbelt: 1-9 and 0 select toolbelt slots 1-10
-    for (let i = 0; i < 10; i++) {
-        const key = i === 9 ? "0" : String(i + 1);
-        mods.bindKey(key, () => game.selectToolbeltSlot(i));
+    for (let slotIndex = 0; slotIndex < 10; slotIndex++) {
+        const keyLabel = slotIndex === 9 ? "0" : String(slotIndex + 1);
+        modApi.bindKey(keyLabel, () => game.selectToolbeltSlot(slotIndex));
     }
 
     // Speed rebinds: Alt+1 (Pause/Stop), Alt+2 (Normal), Alt+3 (Fast)
-    mods.bindKey("Alt+1", () => game.setSpeed("pause"));
-    mods.bindKey("Alt+2", () => game.setSpeed("normal"));
-    mods.bindKey("Alt+3", () => game.setSpeed("fast"));
+    modApi.bindKey(keyFor("speedPause", "Alt+1"), () => game.setSpeed("pause"));
+    modApi.bindKey(keyFor("speedNormal", "Alt+2"), () => game.setSpeed("normal"));
+    modApi.bindKey(keyFor("speedFast", "Alt+3"), () => game.setSpeed("fast"));
 
     // Plan 1: Q toggle deletion (default -> rectangle-delete -> traffic-eraser -> off), Shift+Del for traffic eraser
-    mods.bindKey("q", () => {
+    modApi.bindKey(keyFor("toggleDelete", "q"), () => {
         if (game.isButtonSelected("rectangle-delete")) {
             game.pressButton("traffic-eraser");
         } else if (game.isButtonSelected("traffic-eraser")) {
@@ -69,19 +77,19 @@ if (mods && mods.game) {
             game.pressButton("rectangle-delete");
         }
     });
-    mods.bindKey("Delete", () => game.pressButton("rectangle-delete"));
-    mods.bindKey("Backspace", () => game.pressButton("rectangle-delete"));
-    mods.bindKey("Shift+Delete", () => game.pressButton("traffic-eraser"));
-    mods.bindKey("Shift+Backspace", () => game.pressButton("traffic-eraser"));
+    modApi.bindKey(keyFor("rectDelete", "Delete"), () => game.pressButton("rectangle-delete"));
+    modApi.bindKey("Backspace", () => game.pressButton("rectangle-delete"));
+    modApi.bindKey(keyFor("trafficEraser", "Shift+Delete"), () => game.pressButton("traffic-eraser"));
+    modApi.bindKey("Shift+Backspace", () => game.pressButton("traffic-eraser"));
 
     // Mode shortcuts
-    mods.bindKey("g", () => game.pressButton("grid"));
-    mods.bindKey("l", () => game.pressButton("traffic-lights"));
-    mods.bindKey("o", () => game.pressButton("roundabout"));
-    mods.bindKey("k", () => game.pressButton("keep-clear"));
+    modApi.bindKey(keyFor("gridMode", "g"), () => game.pressButton("grid"));
+    modApi.bindKey(keyFor("trafficLightsMode", "l"), () => game.pressButton("traffic-lights"));
+    modApi.bindKey(keyFor("roundaboutMode", "o"), () => game.pressButton("roundabout"));
+    modApi.bindKey(keyFor("keepClearMode", "k"), () => game.pressButton("keep-clear"));
 
     // Plan 3: Context-aware E property shift + guard when nothing relevant is selected
-    mods.bindKey("e", () => {
+    modApi.bindKey(keyFor("propertyShift", "e"), () => {
         if (game.isButtonSelected("grid")) {
             cycleGridDensity();
             return true;
@@ -97,171 +105,175 @@ if (mods && mods.game) {
     });
 
     // Mouse interactions (Plans 2, 4, 5, 6, 7)
-    if (typeof mods.onMouse === "function") {
-        let rightPan = null;
-        let shiftDelete = null;
-        let dragPlace = null;
+    if (typeof modApi.onMouse === "function") {
+        let rightPanState = null;
+        let shiftDeleteState = null;
+        let dragPlaceState = null;
         let suppressNextContextMenu = false;
 
         // Plan 2: Mouse wheel cycles toolbelt; Ctrl+Wheel zooms camera
-        mods.onMouse(
+        modApi.onMouse(
             "wheel",
-            (e) => {
-                if (e.target && typeof e.target.closest === "function" && e.target.closest(".ui-wheel-scroll, #trafficity-mod-manager-root")) {
+            (wheelEvent) => {
+                if (
+                    wheelEvent.target &&
+                    typeof wheelEvent.target.closest === "function" &&
+                    wheelEvent.target.closest(".ui-wheel-scroll, #trafficity-mod-manager-root")
+                ) {
                     return;
                 }
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                if (e.ctrlKey) {
+                wheelEvent.preventDefault();
+                wheelEvent.stopImmediatePropagation();
+                if (wheelEvent.ctrlKey) {
                     game.sendSyntheticWheel({
-                        deltaX: e.deltaX,
-                        deltaY: e.deltaY,
-                        deltaZ: e.deltaZ,
-                        deltaMode: e.deltaMode,
-                        clientX: e.clientX,
-                        clientY: e.clientY,
+                        deltaX: wheelEvent.deltaX,
+                        deltaY: wheelEvent.deltaY,
+                        deltaZ: wheelEvent.deltaZ,
+                        deltaMode: wheelEvent.deltaMode,
+                        clientX: wheelEvent.clientX,
+                        clientY: wheelEvent.clientY,
                         ctrlKey: false,
                     });
                 } else {
-                    game.cycleToolbeltSlot(e.deltaY > 0 ? 1 : -1);
+                    game.cycleToolbeltSlot(wheelEvent.deltaY > 0 ? 1 : -1);
                 }
             },
             { passive: false },
         );
 
-        mods.onMouse("mousedown", (e) => {
+        modApi.onMouse("mousedown", (mouseEvent) => {
             // Plan 7: Mouse Back (button 3) -> Undo, Mouse Forward (button 4) -> Redo
-            if (e.button === 3) {
-                e.preventDefault();
-                e.stopImmediatePropagation();
+            if (mouseEvent.button === 3) {
+                mouseEvent.preventDefault();
+                mouseEvent.stopImmediatePropagation();
                 game.undo();
                 return;
             }
-            if (e.button === 4) {
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                const redoSvc = typeof mods.use === "function" ? mods.use("redo") : null;
-                if (redoSvc && typeof redoSvc.redo === "function") {
-                    redoSvc.redo();
+            if (mouseEvent.button === 4) {
+                mouseEvent.preventDefault();
+                mouseEvent.stopImmediatePropagation();
+                const redoService = typeof modApi.use === "function" ? modApi.use("redo") : null;
+                if (redoService && typeof redoService.redo === "function") {
+                    redoService.redo();
                 }
                 return;
             }
 
-            if (isUiEventTarget(e.target)) return;
+            if (isUiEventTarget(mouseEvent.target)) return;
 
             // Plan 5: Shift + Right-Click Hold -> Rectangle Delete shortcut
-            if (e.button === 2 && e.shiftKey) {
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                const wasDelete = game.isButtonSelected("rectangle-delete");
-                if (!wasDelete) {
+            if (mouseEvent.button === 2 && mouseEvent.shiftKey) {
+                mouseEvent.preventDefault();
+                mouseEvent.stopImmediatePropagation();
+                const wasDeleteSelected = game.isButtonSelected("rectangle-delete");
+                if (!wasDeleteSelected) {
                     game.pressButton("rectangle-delete");
                 }
-                shiftDelete = { restoreOnUp: !wasDelete };
+                shiftDeleteState = { restoreOnUp: !wasDeleteSelected };
                 game.sendSyntheticMouse("mousedown", {
                     button: 0,
                     buttons: 1,
-                    clientX: e.clientX,
-                    clientY: e.clientY,
+                    clientX: mouseEvent.clientX,
+                    clientY: mouseEvent.clientY,
                     shiftKey: true,
                 });
                 return;
             }
 
             // Plan 4: Right-Click Hold when idle -> Camera Pan
-            if (e.button === 2 && !e.shiftKey && game.isIdle()) {
-                rightPan = { startX: e.clientX, startY: e.clientY, active: false };
+            if (mouseEvent.button === 2 && !mouseEvent.shiftKey && game.isIdle()) {
+                rightPanState = { startX: mouseEvent.clientX, startY: mouseEvent.clientY, active: false };
                 return;
             }
 
             // Plan 6: Left-Click Hold & Drop placement in road placement / grid modes
-            if (e.button === 0 && !e.shiftKey) {
-                const gs = globalThis.__trafficityGameState;
-                const mode = game.getCursorMode();
+            if (mouseEvent.button === 0 && !mouseEvent.shiftKey) {
+                const gameState = typeof game.getUndoApi === "function" ? game.getUndoApi().gameState : null;
+                const cursorMode = game.getCursorMode();
                 const canDragPlace =
-                    (mode === "road placement" && gs?.cursorMode?.startPoint == null) ||
-                    (mode === "grid" && gs?.cursorMode?.firstPoint == null);
+                    (cursorMode === "road placement" && gameState?.cursorMode?.startPoint == null) ||
+                    (cursorMode === "grid" && gameState?.cursorMode?.firstPoint == null);
                 if (canDragPlace) {
-                    dragPlace = { startX: e.clientX, startY: e.clientY, started: false };
+                    dragPlaceState = { startX: mouseEvent.clientX, startY: mouseEvent.clientY, started: false };
                 }
             }
         });
 
-        mods.onMouse("mousemove", (e) => {
-            if (rightPan && !rightPan.active) {
-                if (Math.hypot(e.clientX - rightPan.startX, e.clientY - rightPan.startY) >= 4) {
-                    rightPan.active = true;
+        modApi.onMouse("mousemove", (mouseEvent) => {
+            if (rightPanState && !rightPanState.active) {
+                if (Math.hypot(mouseEvent.clientX - rightPanState.startX, mouseEvent.clientY - rightPanState.startY) >= 4) {
+                    rightPanState.active = true;
                     game.sendSyntheticMouse("mousedown", {
                         button: 1,
                         buttons: 4,
-                        clientX: rightPan.startX,
-                        clientY: rightPan.startY,
+                        clientX: rightPanState.startX,
+                        clientY: rightPanState.startY,
                     });
                 }
             }
 
-            if (dragPlace && !dragPlace.started) {
-                if (Math.hypot(e.clientX - dragPlace.startX, e.clientY - dragPlace.startY) >= 6) {
-                    dragPlace.started = true;
+            if (dragPlaceState && !dragPlaceState.started) {
+                if (Math.hypot(mouseEvent.clientX - dragPlaceState.startX, mouseEvent.clientY - dragPlaceState.startY) >= 6) {
+                    dragPlaceState.started = true;
                     game.sendSyntheticMouse("mousemove", {
                         button: 0,
                         buttons: 1,
-                        clientX: dragPlace.startX,
-                        clientY: dragPlace.startY,
+                        clientX: dragPlaceState.startX,
+                        clientY: dragPlaceState.startY,
                     });
                     game.sendSyntheticMouse("click", {
                         button: 0,
                         buttons: 0,
-                        clientX: dragPlace.startX,
-                        clientY: dragPlace.startY,
+                        clientX: dragPlaceState.startX,
+                        clientY: dragPlaceState.startY,
                     });
                 }
             }
         });
 
-        mods.onMouse("mouseup", (e) => {
-            if (e.button === 0) {
-                dragPlace = null;
+        modApi.onMouse("mouseup", (mouseEvent) => {
+            if (mouseEvent.button === 0) {
+                dragPlaceState = null;
             }
 
-            if (e.button === 2 && shiftDelete) {
-                e.preventDefault();
-                e.stopImmediatePropagation();
+            if (mouseEvent.button === 2 && shiftDeleteState) {
+                mouseEvent.preventDefault();
+                mouseEvent.stopImmediatePropagation();
                 suppressNextContextMenu = true;
                 game.sendSyntheticMouse("mouseup", {
                     button: 0,
                     buttons: 0,
-                    clientX: e.clientX,
-                    clientY: e.clientY,
-                    shiftKey: e.shiftKey,
+                    clientX: mouseEvent.clientX,
+                    clientY: mouseEvent.clientY,
+                    shiftKey: mouseEvent.shiftKey,
                 });
-                if (shiftDelete.restoreOnUp) {
+                if (shiftDeleteState.restoreOnUp) {
                     game.pressButton("rectangle-delete");
                 }
-                shiftDelete = null;
+                shiftDeleteState = null;
                 return;
             }
 
-            if (e.button === 2 && rightPan) {
-                if (rightPan.active) {
-                    e.preventDefault();
-                    e.stopImmediatePropagation();
+            if (mouseEvent.button === 2 && rightPanState) {
+                if (rightPanState.active) {
+                    mouseEvent.preventDefault();
+                    mouseEvent.stopImmediatePropagation();
                     suppressNextContextMenu = true;
                     game.sendSyntheticMouse("mouseup", {
                         button: 1,
                         buttons: 0,
-                        clientX: e.clientX,
-                        clientY: e.clientY,
+                        clientX: mouseEvent.clientX,
+                        clientY: mouseEvent.clientY,
                     });
                 }
-                rightPan = null;
+                rightPanState = null;
             }
         });
 
-        mods.onMouse("contextmenu", (e) => {
+        modApi.onMouse("contextmenu", (mouseEvent) => {
             if (suppressNextContextMenu) {
-                e.preventDefault();
-                e.stopImmediatePropagation();
+                mouseEvent.preventDefault();
+                mouseEvent.stopImmediatePropagation();
                 suppressNextContextMenu = false;
             }
         });

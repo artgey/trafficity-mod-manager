@@ -297,16 +297,12 @@ if (mods && mods.game) {
     });
 
     if (!controller.installSnapHook()) {
-        const timer = setInterval(() => {
-            if (controller.installSnapHook()) {
-                clearInterval(timer);
-            }
-        }, 100);
-        window.addEventListener("load", () => {
-            if (controller.installSnapHook()) {
-                clearInterval(timer);
-            }
-        }, { once: true });
+        if (typeof mods.game.on === "function") {
+            mods.game.on("ready", () => controller.installSnapHook());
+            mods.game.on("cursorModeChange", () => controller.installSnapHook());
+        } else {
+            window.addEventListener("load", () => controller.installSnapHook(), { once: true });
+        }
     }
 
     if (document.body) controller.mountHud();

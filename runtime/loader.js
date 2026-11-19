@@ -370,25 +370,146 @@
         getSnapApi: () => ({
             snapModule: globalThis.__trafficitySnapModule || game.requireRouterModule("aYVZj") || null,
         }),
-        getCameraState: () => {
-            const gs = globalThis.__trafficityGameState;
-            if (!gs || !gs.mapContainer || !gs.saveState) return null;
+        configureSnapSearch: ({ maxSteps, stride, suppressLog } = {}) => {
+            if (typeof maxSteps === "number") globalThis.__trafficityMaxSnapSearchSteps = maxSteps;
+            if (typeof stride === "number") globalThis.__trafficitySnapSearchStride = stride;
+            if (typeof suppressLog === "boolean") globalThis.__trafficitySuppressSnapLog = suppressLog;
             return {
-                x: gs.mapContainer.position.x,
-                y: gs.mapContainer.position.y,
-                zoom: gs.saveState.cameraZoom,
-                width: gs.renderer?.screen?.width || window.innerWidth,
-                height: gs.renderer?.screen?.height || window.innerHeight,
+                maxSteps: globalThis.__trafficityMaxSnapSearchSteps ?? 30,
+                stride: globalThis.__trafficitySnapSearchStride ?? 1,
+                suppressLog: Boolean(globalThis.__trafficitySuppressSnapLog),
+            };
+        },
+        getCameraState: () => {
+            const gameState = globalThis.__trafficityGameState;
+            if (!gameState || !gameState.mapContainer || !gameState.saveState) return null;
+            return {
+                x: gameState.mapContainer.position.x,
+                y: gameState.mapContainer.position.y,
+                zoom: gameState.saveState.cameraZoom,
+                width: gameState.renderer?.screen?.width || window.innerWidth,
+                height: gameState.renderer?.screen?.height || window.innerHeight,
+            };
+        },
+        worldToScreen: (worldX, worldY) => {
+            const camera = game.getCameraState();
+            if (!camera || !camera.zoom) return null;
+            return {
+                x: worldX * camera.zoom + camera.x,
+                y: worldY * camera.zoom + camera.y,
+            };
+        },
+        screenToWorld: (screenX, screenY) => {
+            const camera = game.getCameraState();
+            if (!camera || !camera.zoom) return null;
+            return {
+                x: (screenX - camera.x) / camera.zoom,
+                y: (screenY - camera.y) / camera.zoom,
             };
         },
         getConstants: () => {
-            const b = game.requireRouterModule("bTgKI");
+            const constantsModule = game.requireRouterModule("bTgKI");
             return {
-                laneWidth: b && typeof b.LANE_WIDTH === "number" ? b.LANE_WIDTH : 20,
-                lanePointSpacing: b && typeof b.LANE_POINT_SPACING === "number" ? b.LANE_POINT_SPACING : 3,
+                laneWidth: constantsModule && typeof constantsModule.LANE_WIDTH === "number" ? constantsModule.LANE_WIDTH : 20,
+                lanePointSpacing:
+                    constantsModule && typeof constantsModule.LANE_POINT_SPACING === "number"
+                        ? constantsModule.LANE_POINT_SPACING
+                        : 3,
             };
         },
         getGameRelease: () => catalog.gameRelease || null,
+    };
+
+    const gameListeners = new Map();
+    let readyEmitted = Boolean(globalThis.__trafficityUndoModule && globalThis.__trafficityGameState);
+    let lastCursorMode = null;
+    let lastWorldRevision = null;
+    let lastUndoLen = null;
+    let eventRafId = null;
+
+    const emitGameEvent = (name, ...args) => {
+        const set = gameListeners.get(name);
+        if (!set) return;
+        for (const fn of [...set]) {
+            try {
+                fn(...args);
+            } catch (err) {
+                console.error(`[TrafficityMods] Error in game.on("${name}") handler:`, err);
+            }
+        }
+    };
+
+    const hasWatchedStateListeners = () =>
+        ["cursorModeChange", "worldChange", "roadPlaced"].some((k) => {
+            const set = gameListeners.get(k);
+            return set && set.size > 0;
+        });
+
+    const pollGameEvents = () => {
+        eventRafId = null;
+        if (!hasWatchedStateListeners()) return;
+
+        const gs = globalThis.__trafficityGameState;
+        if (gs) {
+            const mode = gs.cursorMode ? gs.cursorMode.mode : null;
+            if (lastCursorMode !== null && mode !== lastCursorMode) {
+                emitGameEvent("cursorModeChange", mode, lastCursorMode);
+            }
+            lastCursorMode = mode;
+
+            const rev = gs.saveState && typeof gs.saveState.worldRevision === "number" ? gs.saveState.worldRevision : null;
+            if (lastWorldRevision !== null && rev !== null && rev !== lastWorldRevision) {
+                emitGameEvent("worldChange", rev, lastWorldRevision);
+            }
+            if (rev !== null) lastWorldRevision = rev;
+
+            const undoHist = globalThis.__trafficityUndoHistory;
+            if (gs.saveState && undoHist && typeof undoHist.getUndoHistory === "function") {
+                const hist = undoHist.getUndoHistory(gs.saveState);
+                const len = hist && Array.isArray(hist.entries) ? hist.entries.length : null;
+                if (lastUndoLen !== null && len !== null && len > lastUndoLen) {
+                    emitGameEvent("roadPlaced", { entriesCount: len, worldRevision: rev });
+                }
+                if (len !== null) lastUndoLen = len;
+            }
+        }
+
+        if (typeof requestAnimationFrame === "function") {
+            eventRafId = requestAnimationFrame(pollGameEvents);
+        }
+    };
+
+    const ensureReady = () => {
+        if (readyEmitted) return;
+        if (globalThis.__trafficityUndoModule || globalThis.__trafficityGameState) {
+            readyEmitted = true;
+            emitGameEvent("ready");
+        }
+    };
+    window.addEventListener("trafficity:undo-ready", ensureReady, { once: true });
+    window.addEventListener("load", ensureReady, { once: true });
+
+    game.on = (event, handler) => {
+        if (!event || typeof handler !== "function") return () => {};
+        let set = gameListeners.get(event);
+        if (!set) {
+            set = new Set();
+            gameListeners.set(event, set);
+        }
+        set.add(handler);
+        if (event === "ready") {
+            ensureReady();
+            if (readyEmitted) queueMicrotask(() => set.has(handler) && handler());
+        } else if (eventRafId === null && typeof requestAnimationFrame === "function") {
+            eventRafId = requestAnimationFrame(pollGameEvents);
+        }
+        return () => {
+            set.delete(handler);
+            if (!hasWatchedStateListeners() && eventRafId !== null && typeof cancelAnimationFrame === "function") {
+                cancelAnimationFrame(eventRafId);
+                eventRafId = null;
+            }
+        };
     };
 
     const UI_ISOLATION_EVENTS = [
@@ -444,10 +565,12 @@
             mouseBindings.push({ type, wrapped, listenerOpts });
             window.addEventListener(type, wrapped, listenerOpts);
         },
-        getConfig: (modId) => {
-            const mod = catalog.mods.find((m) => m.id === modId);
-            return mod && mod.config ? { ...mod.config } : {};
+        getConfig: (modId, defaults = {}) => {
+            const modEntry = catalog.mods.find((entry) => entry.id === modId);
+            const savedConfig = modEntry && modEntry.config ? modEntry.config : {};
+            return { ...defaults, ...savedConfig };
         },
+        defineMod: (setupMod) => setupMod,
         setConfig: async (modId, config) => {
             const mod = catalog.mods.find((m) => m.id === modId);
             if (mod) {
@@ -558,9 +681,12 @@
             }
             if (mod.entry) {
                 try {
-                    await import(`${base}/${mod.entry.replace(/^\/+/, "")}`);
-                } catch (err) {
-                    console.error(`[TrafficityMods] Failed to load mod ${mod.id}:`, err);
+                    const modModule = await import(`${base}/${mod.entry.replace(/^\/+/, "")}`);
+                    if (modModule && typeof modModule.default === "function") {
+                        await modModule.default(api, game);
+                    }
+                } catch (error) {
+                    console.error(`[TrafficityMods] Failed to load mod ${mod.id}:`, error);
                 }
             }
         }
@@ -598,17 +724,42 @@
                 const warn = dependencyWarnings.get(mod.id);
                 const deps = [...(mod.dependencies || []), ...(mod.optionalDependencies || [])];
                 const depBadge = deps.length > 0 ? `<span class="tmod-badge">${deps.length} dep${deps.length === 1 ? "" : "s"}</span>` : "";
+                const schema = Array.isArray(mod.settingsSchema) ? mod.settingsSchema : [];
+                const settingsHtml =
+                    schema.length > 0
+                        ? `<div class="tmod-settings" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);display:flex;flex-direction:column;gap:6px;">
+                            ${schema
+                                .map((s) => {
+                                    const cur = mod.config && mod.config[s.key] !== undefined ? mod.config[s.key] : s.value;
+                                    const label = escapeHtml(s.label || s.key);
+                                    if (s.type === "boolean") {
+                                        return `<label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#e2e8f0;gap:8px;"><span>${label}</span><input type="checkbox" data-setting-mod="${escapeHtml(mod.id)}" data-setting-key="${escapeHtml(s.key)}" data-setting-type="boolean" ${cur ? "checked" : ""}></label>`;
+                                    }
+                                    if (s.type === "select" && Array.isArray(s.options)) {
+                                        const opts = s.options
+                                            .map((o) => `<option value="${escapeHtml(o)}" ${String(cur) === String(o) ? "selected" : ""}>${escapeHtml(o)}</option>`)
+                                            .join("");
+                                        return `<label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#e2e8f0;gap:8px;"><span>${label}</span><select data-setting-mod="${escapeHtml(mod.id)}" data-setting-key="${escapeHtml(s.key)}" data-setting-type="select" style="background:#0f172a;color:#f8fafc;border:1px solid rgba(255,255,255,0.18);border-radius:4px;padding:2px 6px;font-size:11px;">${opts}</select></label>`;
+                                    }
+                                    const inputType = s.type === "number" ? "number" : "text";
+                                    return `<label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#e2e8f0;gap:8px;"><span>${label}</span><input type="${inputType}" data-setting-mod="${escapeHtml(mod.id)}" data-setting-key="${escapeHtml(s.key)}" data-setting-type="${inputType}" value="${escapeHtml(cur ?? "")}" style="width:110px;background:#0f172a;color:#f8fafc;border:1px solid rgba(255,255,255,0.18);border-radius:4px;padding:2px 6px;font-size:11px;"></label>`;
+                                })
+                                .join("")}
+                           </div>`
+                        : "";
                 return `
                     <div class="tmod-item ${mod.error || warn ? "tmod-error" : ""}">
-                        <div class="tmod-item-info">
+                        <div class="tmod-item-info" style="flex:1;min-width:0;">
                             <div class="tmod-item-title">
                                 <strong>${escapeHtml(mod.name)}</strong>
                                 <span class="tmod-ver">v${escapeHtml(mod.version)}</span>
                                 ${depBadge}
                             </div>
                             ${mod.author ? `<div class="tmod-author">by ${escapeHtml(mod.author)}</div>` : ""}
+                            ${mod.forkedFrom ? `<div class="tmod-author" style="color:#93c5fd">Forked from ${escapeHtml(mod.forkedFrom.name || mod.forkedFrom.id)} v${escapeHtml(mod.forkedFrom.version || "1.0.0")}</div>` : ""}
                             ${mod.description ? `<div class="tmod-desc">${escapeHtml(mod.description)}</div>` : ""}
                             ${warn ? `<div class="tmod-desc" style="color:#fca5a5">${escapeHtml(warn)}</div>` : ""}
+                            ${settingsHtml}
                         </div>
                         <label class="tmod-switch">
                             <input type="checkbox" data-mod-id="${escapeHtml(mod.id)}" ${mod.enabled ? "checked" : ""} ${mod.error ? "disabled" : ""}>
@@ -630,6 +781,26 @@
                 });
                 const target = catalog.mods.find((m) => m.id === id);
                 if (target) target.enabled = enabled;
+                dirtyRestart = true;
+                renderManager();
+            });
+        }
+
+        for (const input of list.querySelectorAll("[data-setting-mod][data-setting-key]")) {
+            input.addEventListener("change", async (e) => {
+                const modId = e.target.getAttribute("data-setting-mod");
+                const key = e.target.getAttribute("data-setting-key");
+                const kind = e.target.getAttribute("data-setting-type");
+                const target = catalog.mods.find((m) => m.id === modId);
+                if (!target) return;
+                const val =
+                    kind === "boolean"
+                        ? Boolean(e.target.checked)
+                        : kind === "number"
+                          ? Number(e.target.value)
+                          : e.target.value;
+                const nextConfig = { ...(target.config || {}), [key]: val };
+                await api.setConfig(modId, nextConfig);
                 dirtyRestart = true;
                 renderManager();
             });

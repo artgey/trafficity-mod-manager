@@ -1,10 +1,13 @@
 #include "Backend.h"
 
+#include <QClipboard>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -145,6 +148,7 @@ void Backend::runPatcherArgs(const QStringList &args, bool isStatusQuery) {
                 m_statusText = QStringLiteral("Status Check Failed");
                 emit stateChanged();
             }
+            runHealthCheck();
         } else {
             if (!stdoutData.trimmed().isEmpty()) {
                 appendLog(QString::fromUtf8(stdoutData));
@@ -166,6 +170,44 @@ void Backend::runPatcherArgs(const QStringList &args, bool isStatusQuery) {
     });
 
     proc->start(QStringLiteral("node"), args);
+}
+
+static QString computeModCodeHash(const QString &modDir) {
+    QStringList relFiles;
+    auto collect = [&](auto &self, const QString &rel) -> void {
+        const QString abs = rel.isEmpty() ? modDir : QDir(modDir).filePath(rel);
+        QDir dir(abs);
+        const QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QFileInfo &entry : entries) {
+            const QString name = entry.fileName();
+            if (name.startsWith(QLatin1Char('.')) || name == QStringLiteral("node_modules")) continue;
+            const QString childRel = rel.isEmpty() ? name : (rel + QLatin1Char('/') + name);
+            if (entry.isDir()) {
+                self(self, childRel);
+            } else {
+                if (name == QStringLiteral("settings.toml") ||
+                    name.endsWith(QStringLiteral(".test.mjs")) ||
+                    name.endsWith(QStringLiteral(".zip"))) {
+                    continue;
+                }
+                relFiles.append(childRel);
+            }
+        }
+    };
+    collect(collect, QString());
+    relFiles.sort();
+
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    for (const QString &rel : relFiles) {
+        hash.addData(rel.toUtf8());
+        hash.addData(QByteArrayView("\0", 1));
+        QFile f(QDir(modDir).filePath(rel));
+        if (f.open(QIODevice::ReadOnly)) {
+            hash.addData(f.readAll());
+        }
+        hash.addData(QByteArrayView("\0", 1));
+    }
+    return QString::fromLatin1(hash.result().toHex());
 }
 
 void Backend::loadModsFromDisk() {
@@ -229,8 +271,44 @@ void Backend::loadModsFromDisk() {
         item[QStringLiteral("version")] = obj.value(QStringLiteral("version")).toString(QStringLiteral("1.0.0"));
         item[QStringLiteral("author")] = obj.value(QStringLiteral("author")).toString();
         item[QStringLiteral("description")] = obj.value(QStringLiteral("description")).toString();
+        const QString currentHash = computeModCodeHash(entry.absoluteFilePath());
+        bool isUnedited = false;
+        const QString originPath = QDir(entry.absoluteFilePath()).filePath(QStringLiteral(".tmod-origin.json"));
+        QFile originFile(originPath);
+        if (originFile.open(QIODevice::ReadOnly)) {
+            const QJsonDocument originDoc = QJsonDocument::fromJson(originFile.readAll());
+            originFile.close();
+            if (originDoc.isObject()) {
+                const QString originHash = originDoc.object().value(QStringLiteral("codeHash")).toString();
+                if (!originHash.isEmpty() && originHash == currentHash) {
+                    isUnedited = true;
+                }
+            }
+        } else {
+            const QString exampleDir = QDir(m_repoRoot).filePath(QStringLiteral("examples/%1").arg(folder));
+            if (QDir(exampleDir).exists() && computeModCodeHash(exampleDir) == currentHash) {
+                isUnedited = true;
+            }
+        }
+
         item[QStringLiteral("depsText")] = deps.join(QStringLiteral(", "));
         item[QStringLiteral("enabled")] = enabledMap.value(id).toBool(false);
+        item[QStringLiteral("hasSettings")] = QFile::exists(QDir(entry.absoluteFilePath()).filePath(QStringLiteral("settings.toml")));
+        item[QStringLiteral("publishable")] = !isUnedited;
+        const QJsonObject forkedFrom = obj.value(QStringLiteral("forkedFrom")).toObject();
+        QString forkedText;
+        QString forkedUrl;
+        if (!forkedFrom.isEmpty()) {
+            const QString origName = forkedFrom.value(QStringLiteral("name")).toString(forkedFrom.value(QStringLiteral("id")).toString());
+            const QString origVer = forkedFrom.value(QStringLiteral("version")).toString(QStringLiteral("1.0.0"));
+            const QString origAuthor = forkedFrom.value(QStringLiteral("author")).toString();
+            forkedText = origAuthor.isEmpty()
+                ? QStringLiteral("Forked from %1 v%2").arg(origName, origVer)
+                : QStringLiteral("Forked from %1 v%2 by %3").arg(origName, origVer, origAuthor);
+            forkedUrl = forkedFrom.value(QStringLiteral("downloadUrl")).toString();
+        }
+        item[QStringLiteral("forkedFromText")] = forkedText;
+        item[QStringLiteral("forkedFromUrl")] = forkedUrl;
         item[QStringLiteral("error")] = false;
         list.append(item);
     }
@@ -274,6 +352,51 @@ void Backend::toggleMod(const QString &modId, bool enabled) {
     }
 }
 
+void Backend::removeMod(const QString &modId, const QString &folderName) {
+    if (m_modsDir.isEmpty() || folderName.isEmpty() || folderName == QStringLiteral(".") ||
+        folderName == QStringLiteral("..") || folderName.contains(QLatin1Char('/')) ||
+        folderName.contains(QLatin1Char('\\'))) {
+        appendLog(QStringLiteral("Refused to remove invalid mod folder."));
+        return;
+    }
+
+    const QString targetPath = QDir(m_modsDir).filePath(folderName);
+    QDir targetDir(targetPath);
+    if (!targetDir.exists()) {
+        appendLog(QStringLiteral("Mod folder not found: %1").arg(targetPath));
+        loadModsFromDisk();
+        return;
+    }
+
+    if (!targetDir.removeRecursively()) {
+        appendLog(QStringLiteral("Failed to remove mod folder: %1").arg(targetPath));
+        return;
+    }
+
+    const QString cfgPath = configFilePath();
+    QFile inFile(cfgPath);
+    if (inFile.open(QIODevice::ReadOnly)) {
+        const QJsonDocument doc = QJsonDocument::fromJson(inFile.readAll());
+        inFile.close();
+        if (doc.isObject()) {
+            QJsonObject root = doc.object();
+            QJsonObject enabledMap = root.value(QStringLiteral("enabled")).toObject();
+            if (enabledMap.contains(modId)) {
+                enabledMap.remove(modId);
+                root[QStringLiteral("enabled")] = enabledMap;
+                QFile outFile(cfgPath);
+                if (outFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                    outFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+                    outFile.close();
+                }
+            }
+        }
+    }
+
+    appendLog(QStringLiteral("Removed mod %1 (%2)").arg(modId.isEmpty() ? folderName : modId, folderName));
+    loadModsFromDisk();
+}
+
 bool Backend::copyDirRecursive(const QString &srcPath, const QString &dstPath) {
     QDir srcDir(srcPath);
     if (!srcDir.exists()) return false;
@@ -313,9 +436,26 @@ void Backend::installExamples() {
         }
         const QString dest = QDir(m_modsDir).filePath(entry.fileName());
         if (copyDirRecursive(entry.absoluteFilePath(), dest)) {
+            QJsonObject originObj;
+            originObj[QStringLiteral("source")] = QStringLiteral("examples");
+            originObj[QStringLiteral("originalId")] = entry.fileName();
+            originObj[QStringLiteral("codeHash")] = computeModCodeHash(dest);
+            QFile originOut(QDir(dest).filePath(QStringLiteral(".tmod-origin.json")));
+            if (originOut.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                originOut.write(QJsonDocument(originObj).toJson(QJsonDocument::Indented));
+                originOut.close();
+            }
             installed += 1;
         }
     }
+
+    QProcess syncProc;
+    syncProc.setWorkingDirectory(m_repoRoot);
+    syncProc.start(QStringLiteral("node"), {
+        QDir(m_repoRoot).filePath(QStringLiteral("src/health.mjs")),
+        QStringLiteral("--sync-types"),
+    });
+    syncProc.waitForFinished(5000);
 
     appendLog(QStringLiteral("Installed/updated %1 example mod(s) into %2").arg(installed).arg(m_modsDir));
     loadModsFromDisk();
@@ -358,15 +498,14 @@ void Backend::openGame() {
     appendLog(QStringLiteral("Failed to launch Trafficity. Open it via Steam (App 5185750)."));
 }
 
-void Backend::fetchRegistry() {
+void Backend::runNodeAsync(const QStringList &args, const std::function<void(int, const QByteArray &)> &onDone) {
     if (m_isBusy) return;
     m_isBusy = true;
     emit busyChanged();
-    appendLog(QStringLiteral("Fetching community mod registry..."));
 
     auto *proc = new QProcess(this);
     proc->setWorkingDirectory(m_repoRoot);
-    connect(proc, &QProcess::finished, this, [this, proc](int exitCode, QProcess::ExitStatus) {
+    connect(proc, &QProcess::finished, this, [this, proc, onDone](int exitCode, QProcess::ExitStatus) {
         const QByteArray out = proc->readAllStandardOutput();
         const QByteArray err = proc->readAllStandardError();
         proc->deleteLater();
@@ -376,6 +515,17 @@ void Backend::fetchRegistry() {
         if (!err.trimmed().isEmpty()) {
             appendLog(QString::fromUtf8(err));
         }
+        if (onDone) {
+            onDone(exitCode, out);
+        }
+    });
+    proc->start(QStringLiteral("node"), args);
+}
+
+void Backend::fetchRegistry() {
+    if (m_isBusy) return;
+    appendLog(QStringLiteral("Fetching community mod registry..."));
+    runNodeAsync({ QDir(m_repoRoot).filePath(QStringLiteral("src/registry.mjs")), QStringLiteral("--list") }, [this](int exitCode, const QByteArray &out) {
         if (exitCode != 0) {
             appendLog(QStringLiteral("Registry fetch failed (exit %1).").arg(exitCode));
             return;
@@ -402,30 +552,218 @@ void Backend::fetchRegistry() {
         emit registryChanged();
         appendLog(QStringLiteral("Loaded %1 mod(s) from registry.").arg(list.size()));
     });
-    proc->start(QStringLiteral("node"), { QDir(m_repoRoot).filePath(QStringLiteral("src/registry.mjs")), QStringLiteral("--list") });
 }
 
 void Backend::installMod(const QString &idOrUrl) {
     const QString target = idOrUrl.trimmed();
     if (m_isBusy || target.isEmpty()) return;
-    m_isBusy = true;
-    emit busyChanged();
     appendLog(QStringLiteral("Installing mod: %1").arg(target));
-
-    auto *proc = new QProcess(this);
-    proc->setWorkingDirectory(m_repoRoot);
-    connect(proc, &QProcess::finished, this, [this, proc](int exitCode, QProcess::ExitStatus) {
-        const QByteArray out = proc->readAllStandardOutput();
-        const QByteArray err = proc->readAllStandardError();
-        proc->deleteLater();
-        m_isBusy = false;
-        emit busyChanged();
-
+    runNodeAsync({ QDir(m_repoRoot).filePath(QStringLiteral("src/registry.mjs")), QStringLiteral("--install"), target }, [this](int exitCode, const QByteArray &out) {
         if (!out.trimmed().isEmpty()) appendLog(QString::fromUtf8(out));
-        if (!err.trimmed().isEmpty()) appendLog(QString::fromUtf8(err));
-        if (exitCode == 0) {
-            loadModsFromDisk();
-        }
+        if (exitCode == 0) loadModsFromDisk();
     });
-    proc->start(QStringLiteral("node"), { QDir(m_repoRoot).filePath(QStringLiteral("src/registry.mjs")), QStringLiteral("--install"), target });
+}
+
+void Backend::scaffoldMod(const QString &id,
+                          const QString &name,
+                          const QString &author,
+                          const QString &description,
+                          bool includeStyle,
+                          bool includeSettings,
+                          bool includeTypes,
+                          bool includeExample) {
+    if (m_isBusy) return;
+    if (m_modsDir.isEmpty()) {
+        appendLog(QStringLiteral("Mods directory is not resolved yet."));
+        return;
+    }
+    const QString trimmedId = id.trimmed();
+    if (trimmedId.isEmpty()) {
+        appendLog(QStringLiteral("Please enter a Mod ID before creating."));
+        return;
+    }
+
+    QStringList args = {
+        QDir(m_repoRoot).filePath(QStringLiteral("src/mod-tools.mjs")),
+        QStringLiteral("--scaffold"), trimmedId,
+        QStringLiteral("--target-dir"), m_modsDir,
+    };
+    if (!name.trimmed().isEmpty()) args << QStringLiteral("--name") << name.trimmed();
+    if (!author.trimmed().isEmpty()) args << QStringLiteral("--author") << author.trimmed();
+    if (!description.trimmed().isEmpty()) args << QStringLiteral("--description") << description.trimmed();
+    if (!includeStyle) args << QStringLiteral("--no-style");
+    if (!includeSettings) args << QStringLiteral("--no-settings");
+    if (!includeTypes) args << QStringLiteral("--no-types");
+    if (!includeExample) args << QStringLiteral("--no-example");
+
+    runNodeAsync(args, [this](int exitCode, const QByteArray &out) {
+        if (exitCode != 0) return;
+        const QJsonDocument doc = QJsonDocument::fromJson(out);
+        if (doc.isObject()) {
+            m_lastCreatedModPath = doc.object().value(QStringLiteral("dir")).toString();
+            emit studioChanged();
+            appendLog(QStringLiteral("Mod saved to %1").arg(m_lastCreatedModPath));
+        }
+        loadModsFromDisk();
+    });
+}
+
+void Backend::forkMod(const QString &sourceFolder, const QString &newName, const QString &newAuthor) {
+    if (m_isBusy || m_modsDir.isEmpty() || sourceFolder.isEmpty()) return;
+    QStringList args = {
+        QDir(m_repoRoot).filePath(QStringLiteral("src/mod-tools.mjs")),
+        QStringLiteral("--fork"), QDir(m_modsDir).filePath(sourceFolder),
+        QStringLiteral("--target-dir"), m_modsDir,
+    };
+    if (!newName.trimmed().isEmpty()) args << QStringLiteral("--name") << newName.trimmed();
+    if (!newAuthor.trimmed().isEmpty()) args << QStringLiteral("--author") << newAuthor.trimmed();
+
+    runNodeAsync(args, [this](int exitCode, const QByteArray &out) {
+        if (exitCode != 0) return;
+        const QJsonDocument doc = QJsonDocument::fromJson(out);
+        if (doc.isObject()) {
+            m_lastCreatedModPath = doc.object().value(QStringLiteral("dir")).toString();
+            emit studioChanged();
+            appendLog(QStringLiteral("Forked mod saved to %1").arg(m_lastCreatedModPath));
+        }
+        loadModsFromDisk();
+    });
+}
+
+void Backend::packMod(const QString &folderName) {
+    if (m_isBusy || m_modsDir.isEmpty() || folderName.isEmpty()) return;
+    runNodeAsync({ QDir(m_repoRoot).filePath(QStringLiteral("src/mod-tools.mjs")), QStringLiteral("--pack"), QDir(m_modsDir).filePath(folderName) }, [this](int exitCode, const QByteArray &out) {
+        if (exitCode != 0) return;
+        const QJsonDocument doc = QJsonDocument::fromJson(out);
+        if (!doc.isObject()) return;
+        const QJsonObject obj = doc.object();
+        const QString zipPath = obj.value(QStringLiteral("zipPath")).toString();
+        const QString sha = obj.value(QStringLiteral("sha256")).toString();
+        m_lastPackResult = QStringLiteral("Packaged %1 (sha256: %2)").arg(zipPath, sha.left(12) + QStringLiteral("..."));
+        emit studioChanged();
+        if (QClipboard *cb = QGuiApplication::clipboard()) cb->setText(sha);
+        appendLog(QStringLiteral("Packaged ZIP: %1 (sha256 copied to clipboard: %2)").arg(zipPath, sha));
+    });
+}
+
+void Backend::publishMod(const QString &folderName) {
+    if (m_isBusy || m_modsDir.isEmpty() || folderName.isEmpty()) return;
+    runNodeAsync({ QDir(m_repoRoot).filePath(QStringLiteral("src/mod-tools.mjs")), QStringLiteral("--pack"), QDir(m_modsDir).filePath(folderName) }, [this](int exitCode, const QByteArray &out) {
+        if (exitCode != 0) return;
+        const QJsonDocument doc = QJsonDocument::fromJson(out);
+        if (!doc.isObject()) return;
+        const QJsonObject obj = doc.object();
+        const QString zipPath = obj.value(QStringLiteral("zipPath")).toString();
+        const QJsonObject regEntry = obj.value(QStringLiteral("registryEntry")).toObject();
+        if (QClipboard *cb = QGuiApplication::clipboard()) {
+            cb->setText(QString::fromUtf8(QJsonDocument(regEntry).toJson(QJsonDocument::Indented)));
+        }
+        m_lastPackResult = QStringLiteral("Ready to publish: %1 (registry.json entry copied to clipboard)").arg(zipPath);
+        emit studioChanged();
+        appendLog(QStringLiteral("Packaged %1 and copied registry.json entry to clipboard. Upload the .zip to a GitHub Release, update downloadUrl, and open a PR to registry.json.").arg(zipPath));
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/dyri0n/trafficity-mod-manager/edit/main/registry.json")));
+    });
+}
+
+void Backend::openModFolder(const QString &folderName) {
+    if (m_modsDir.isEmpty() || folderName.isEmpty()) return;
+    openPath(QDir(m_modsDir).filePath(folderName));
+}
+
+void Backend::openPath(const QString &path) {
+    if (path.isEmpty()) return;
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+void Backend::openModSettings(const QString &folderName, const QString &modName) {
+    if (m_modsDir.isEmpty() || folderName.isEmpty()) return;
+    const QString modDir = QDir(m_modsDir).filePath(folderName);
+
+    QProcess proc;
+    proc.setWorkingDirectory(m_repoRoot);
+    proc.start(QStringLiteral("node"), {
+        QDir(m_repoRoot).filePath(QStringLiteral("src/mod-tools.mjs")),
+        QStringLiteral("--get-settings"), modDir,
+    });
+    if (!proc.waitForFinished(5000) || proc.exitCode() != 0) {
+        appendLog(QStringLiteral("Failed to read settings.toml for %1").arg(folderName));
+        return;
+    }
+
+    const QJsonDocument doc = QJsonDocument::fromJson(proc.readAllStandardOutput());
+    if (!doc.isObject()) return;
+    const QJsonArray arr = doc.object().value(QStringLiteral("schema")).toArray();
+    QVariantList list;
+    for (const QJsonValue &v : arr) {
+        if (v.isObject()) list.append(v.toObject().toVariantMap());
+    }
+    m_activeSettingsModFolder = folderName;
+    m_activeSettingsModName = modName.isEmpty() ? folderName : modName;
+    m_activeSettingsSchema = list;
+    emit settingsDialogChanged();
+}
+
+void Backend::saveModSettings(const QString &folderName, const QVariantMap &values) {
+    if (m_modsDir.isEmpty() || folderName.isEmpty()) return;
+    const QString modDir = QDir(m_modsDir).filePath(folderName);
+    const QString valuesJson = QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(values)).toJson(QJsonDocument::Compact));
+
+    QProcess proc;
+    proc.setWorkingDirectory(m_repoRoot);
+    proc.start(QStringLiteral("node"), {
+        QDir(m_repoRoot).filePath(QStringLiteral("src/mod-tools.mjs")),
+        QStringLiteral("--set-settings"), modDir,
+        QStringLiteral("--values"), valuesJson,
+    });
+    if (!proc.waitForFinished(5000) || proc.exitCode() != 0) {
+        appendLog(QStringLiteral("Failed to save settings.toml: %1").arg(QString::fromUtf8(proc.readAllStandardError())));
+        return;
+    }
+    appendLog(QStringLiteral("Saved settings.toml for %1").arg(folderName));
+    loadModsFromDisk();
+}
+
+void Backend::runHealthCheck() {
+    if (m_isBusy) return;
+    appendLog(QStringLiteral("Running health check..."));
+
+    QStringList args = { QDir(m_repoRoot).filePath(QStringLiteral("src/health.mjs")), QStringLiteral("--json") };
+    if (!m_gameDir.isEmpty()) {
+        args << QStringLiteral("--game-dir") << m_gameDir;
+    }
+
+    runNodeAsync(args, [this](int, const QByteArray &out) {
+        const QJsonDocument doc = QJsonDocument::fromJson(out);
+        if (!doc.isObject()) return;
+        const QJsonObject obj = doc.object();
+        m_healthOk = obj.value(QStringLiteral("ok")).toBool(false);
+        m_healthWarnings = obj.value(QStringLiteral("warnings")).toInt(0);
+        m_healthErrors = obj.value(QStringLiteral("errors")).toInt(0);
+        m_healthSummary = obj.value(QStringLiteral("summary")).toString();
+        QVariantList list;
+        for (const QJsonValue &v : obj.value(QStringLiteral("checks")).toArray()) {
+            if (v.isObject()) list.append(v.toObject().toVariantMap());
+        }
+        m_healthChecks = list;
+        emit healthChanged();
+        appendLog(QStringLiteral("Health Check: %1").arg(m_healthSummary));
+    });
+}
+
+void Backend::applyHealthFix(const QString &fixAction) {
+    if (fixAction == QStringLiteral("patch")) {
+        patchGame();
+    } else if (fixAction == QStringLiteral("sync-types")) {
+        QProcess proc;
+        proc.setWorkingDirectory(m_repoRoot);
+        proc.start(QStringLiteral("node"), {
+            QDir(m_repoRoot).filePath(QStringLiteral("src/health.mjs")),
+            QStringLiteral("--sync-types"),
+        });
+        proc.waitForFinished(5000);
+        appendLog(QStringLiteral("Synced mods folder jsconfig.json and TrafficityMods types."));
+        runHealthCheck();
+    } else if (fixAction == QStringLiteral("open-mods")) {
+        openModsFolder();
+    }
 }
