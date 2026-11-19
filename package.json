@@ -7,6 +7,7 @@
     "patch": "node src/patch.mjs",
     "restore": "node src/patch.mjs --restore",
     "status": "node src/patch.mjs --status",
+    "install-mod": "node src/registry.mjs --install",
     "test": "node --test test/*.test.mjs examples/*/*.test.mjs",
     "build:ui": "mkdir -p ui/build bin && cd ui/build && qmake6 ../trafficity-mod-manager.pro && make -j$(nproc) && cp trafficity-mod-manager ../../bin/trafficity-mod-manager",
     "app": "./bin/trafficity-mod-manager"

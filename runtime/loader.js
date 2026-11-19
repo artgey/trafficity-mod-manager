@@ -391,6 +391,26 @@
         getGameRelease: () => catalog.gameRelease || null,
     };
 
+    const UI_ISOLATION_EVENTS = [
+        "mousedown",
+        "mouseup",
+        "pointerdown",
+        "pointerup",
+        "click",
+        "dblclick",
+        "contextmenu",
+        "wheel",
+    ];
+
+    const isolateUiElement = (el) => {
+        if (!el || typeof el.addEventListener !== "function") return;
+        for (const type of UI_ISOLATION_EVENTS) {
+            el.addEventListener(type, (e) => {
+                e.stopPropagation();
+            });
+        }
+    };
+
     const api = {
         version: "1.3.0",
         game,
@@ -445,6 +465,7 @@
                 if (!host) {
                     host = document.createElement("div");
                     host.id = `tmod-overlay-${id}`;
+                    isolateUiElement(host);
                     document.body.appendChild(host);
                 }
                 if (typeof content === "string") {
@@ -659,6 +680,7 @@
 
         const root = document.createElement("div");
         root.id = "trafficity-mod-manager-root";
+        isolateUiElement(root);
         root.innerHTML = `
             <button id="tmod-pill" title="Open Mod Manager (F9)">Mods (${enabledMods.length})</button>
             <div id="tmod-drawer">

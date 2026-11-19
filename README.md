@@ -14,15 +14,12 @@ Lightweight Mod Manager, pre-bundle Mod Loader, extensible `TrafficityMods.game`
 Run the pre-compiled Qt6 Quick desktop UI directly (no compilation required):
 
 ```bash
-npm install
-./bin/trafficity-mod-manager
+./launch-app.sh            # Linux (auto-installs npm deps if missing)
+# or:
+npm install && npm run app
 ```
 
-Or via npm:
-
-```bash
-npm run app
-```
+On Windows, double-click [`launch-app.bat`](launch-app.bat) (launches `bin\trafficity-mod-manager.exe` if present, or opens a CLI menu for patching/restoring/status since the bundled `bin/` binary is currently Linux-only).
 
 From the UI you can check game status, patch or restore `app.asar`, install the example mods, toggle mods on/off, open the mods folder natively, and open `docs/api.html`.
 
@@ -52,7 +49,19 @@ Environment variable overrides:
 - **`redo-mod`:** Standalone Redo stack hooking Trafficity's undo journal with `"placeRoad"` SFX, `Ctrl+Y` / `Ctrl+Shift+Z`, and `"redo"` service registration.
 - **`snap-perf-fix-mod`:** Memoizes per-frame road snap queries and bounds the 60-step midpoint overlap loop to eliminate roundabout/autoconnect placement lag.
 - **`measuring-grid-mod`:** Togglable world measuring grid (`Alt+G`) calibrated to road step spacing (`3u`) and lane width (`20u`), adjustable granularity (`[` / `]`), and optional road-point grid snapping (`Alt+S`).
-- **`arrow-pan-mod`:** Minimal example mod using `TrafficityMods.game.cancel()`.
+
+## Hosting & Submitting Community Mods (GitHub Releases)
+
+Mods are hosted for free using **GitHub Releases + [`registry.json`](registry.json)**:
+
+- **Install from CLI:** `npm run install-mod <mod-id-or-zip-url>`
+- **Install from Desktop App:** Switch to the **Community Registry** tab in `npm run app` to browse and 1-click install mods, or paste any `.zip` URL.
+- **Submit Your Own Mod (Anyone Can Contribute):**
+  1. Host your mod `.zip` on a public GitHub Release in your own repo (containing `mod.json`).
+  2. Fork this repo and add your entry to [`registry.json`](registry.json).
+  3. Open a Pull Request (see [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md)).
+
+Tagging a release (`git tag v1.3.0 && git push --tags`) automatically packages `examples/*` into `.zip` files via [`.github/workflows/release-mods.yml`](.github/workflows/release-mods.yml) and attaches them to the GitHub Release.
 
 ## Mod Format & API Documentation
 

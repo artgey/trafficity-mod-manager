@@ -1,6 +1,6 @@
 # AGENTS.md — Trafficity Reverse Engineering Findings & Repo Guide
 
-This file documents the observed architecture of **Trafficity** (Steam App ID `5185750`, Build `26765575`, release `trafficity@1.0.0+b15972261c`), all findings discovered while developing mods, what can be built with the exposed systems, and repository conventions for `trafficity-mod-manager`.
+This file documents the observed architecture of **Trafficity** (Steam App ID `5185750`, Build `26770952`, release `trafficity@1.0.0+5a84bc8003`), all findings discovered while developing mods, what can be built with the exposed systems, and repository conventions for `trafficity-mod-manager`.
 
 ---
 
@@ -94,6 +94,7 @@ This file documents the observed architecture of **Trafficity** (Steam App ID `5
 ### 6. Parcel Update History & Resilience
 - **Build `26757030` (`a7671b7e7a`):** Added `computeAreaDeletionCrossableRefund` (`bTgKI`), junction passing-path loop checks (`8Wq5B`), lane token frontage/congestion split (`5pxKp`, `aFL2A`), and renamed `f5Ojv`'s `undoLastAction` alias `k` → `T`.
 - **Build `26765575` (`b15972261c`):** Added buildings facing/interacting with junction mouths (`5Maft`, `Ql8Cr`, `803W5`, `d1gNk`, `ipWDw`, `hBiFw`, `6l6Hv`), `placement.road.trafficLightsInFrontOfBuilding` (`1gskn` / `4aR6e`), and renderer Crashpad memory annotations (`preload.js` `setCrashAnnotation`, `lDHat`).
+- **Build `26770952` (`5a84bc8003`):** Added `electron/renderer-freeze-watch.js` (unresponsive/GPU frame-stall watch with synchronous Steam overlay fallback via `store.js` `disableSteamOverlaySettingSync` and a 2 s rAF probe in `preload.js`) and glue-along/road-split module `aebgq` (`Router.cd259386.js`). All 9/9 hardened regex hooks passed with zero code changes.
 - **Rule:** Never hardcode single-letter minified variable names in `patchRouterSource`. Use regex captures (`$1`, `$2`, ...) and run `verifyRouterHooks` after patching so missing hooks fail fast on future game updates.
 
 ---

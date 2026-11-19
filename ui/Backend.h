@@ -16,6 +16,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool isBusy READ isBusy NOTIFY busyChanged)
     Q_PROPERTY(QString logText READ logText NOTIFY logChanged)
     Q_PROPERTY(QVariantList mods READ mods NOTIFY modsChanged)
+    Q_PROPERTY(QVariantList registryMods READ registryMods NOTIFY registryChanged)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -30,14 +31,18 @@ public:
     bool isBusy() const { return m_isBusy; }
     QString logText() const { return m_logText; }
     QVariantList mods() const { return m_mods; }
+    QVariantList registryMods() const { return m_registryMods; }
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void patchGame();
     Q_INVOKABLE void restoreGame();
     Q_INVOKABLE void toggleMod(const QString &modId, bool enabled);
     Q_INVOKABLE void installExamples();
+    Q_INVOKABLE void fetchRegistry();
+    Q_INVOKABLE void installMod(const QString &idOrUrl);
     Q_INVOKABLE void openModsFolder();
     Q_INVOKABLE void openApiDocs();
+    Q_INVOKABLE void openGame();
     Q_INVOKABLE void clearLog();
 
 signals:
@@ -45,6 +50,7 @@ signals:
     void busyChanged();
     void logChanged();
     void modsChanged();
+    void registryChanged();
 
 private:
     QString findRepoRoot() const;
@@ -64,4 +70,5 @@ private:
     bool m_isBusy = false;
     QString m_logText;
     QVariantList m_mods;
+    QVariantList m_registryMods;
 };

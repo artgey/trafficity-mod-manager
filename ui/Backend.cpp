@@ -335,3 +335,97 @@ void Backend::openApiDocs() {
         appendLog(QStringLiteral("API docs not found at %1").arg(docsPath));
     }
 }
+
+void Backend::openGame() {
+    if (QDesktopServices::openUrl(QUrl(QStringLiteral("steam://rungameid/5185750")))) {
+        appendLog(QStringLiteral("Launching Trafficity via Steam (steam://rungameid/5185750)..."));
+        return;
+    }
+
+    if (!m_gameDir.isEmpty()) {
+        const QStringList candidates = {
+            QDir(m_gameDir).filePath(QStringLiteral("Trafficity")),
+            QDir(m_gameDir).filePath(QStringLiteral("Trafficity.exe")),
+        };
+        for (const QString &exe : candidates) {
+            if (QFile::exists(exe) && QProcess::startDetached(exe, {}, m_gameDir)) {
+                appendLog(QStringLiteral("Launched %1").arg(exe));
+                return;
+            }
+        }
+    }
+
+    appendLog(QStringLiteral("Failed to launch Trafficity. Open it via Steam (App 5185750)."));
+}
+
+void Backend::fetchRegistry() {
+    if (m_isBusy) return;
+    m_isBusy = true;
+    emit busyChanged();
+    appendLog(QStringLiteral("Fetching community mod registry..."));
+
+    auto *proc = new QProcess(this);
+    proc->setWorkingDirectory(m_repoRoot);
+    connect(proc, &QProcess::finished, this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        const QByteArray out = proc->readAllStandardOutput();
+        const QByteArray err = proc->readAllStandardError();
+        proc->deleteLater();
+        m_isBusy = false;
+        emit busyChanged();
+
+        if (!err.trimmed().isEmpty()) {
+            appendLog(QString::fromUtf8(err));
+        }
+        if (exitCode != 0) {
+            appendLog(QStringLiteral("Registry fetch failed (exit %1).").arg(exitCode));
+            return;
+        }
+        const QJsonDocument doc = QJsonDocument::fromJson(out);
+        if (!doc.isArray()) {
+            appendLog(QStringLiteral("Invalid registry JSON."));
+            return;
+        }
+        QVariantList list;
+        for (const QJsonValue &v : doc.array()) {
+            if (!v.isObject()) continue;
+            const QJsonObject obj = v.toObject();
+            QVariantMap item;
+            item[QStringLiteral("id")] = obj.value(QStringLiteral("id")).toString();
+            item[QStringLiteral("name")] = obj.value(QStringLiteral("name")).toString();
+            item[QStringLiteral("version")] = obj.value(QStringLiteral("version")).toString(QStringLiteral("1.0.0"));
+            item[QStringLiteral("author")] = obj.value(QStringLiteral("author")).toString();
+            item[QStringLiteral("description")] = obj.value(QStringLiteral("description")).toString();
+            item[QStringLiteral("downloadUrl")] = obj.value(QStringLiteral("downloadUrl")).toString();
+            list.append(item);
+        }
+        m_registryMods = list;
+        emit registryChanged();
+        appendLog(QStringLiteral("Loaded %1 mod(s) from registry.").arg(list.size()));
+    });
+    proc->start(QStringLiteral("node"), { QDir(m_repoRoot).filePath(QStringLiteral("src/registry.mjs")), QStringLiteral("--list") });
+}
+
+void Backend::installMod(const QString &idOrUrl) {
+    const QString target = idOrUrl.trimmed();
+    if (m_isBusy || target.isEmpty()) return;
+    m_isBusy = true;
+    emit busyChanged();
+    appendLog(QStringLiteral("Installing mod: %1").arg(target));
+
+    auto *proc = new QProcess(this);
+    proc->setWorkingDirectory(m_repoRoot);
+    connect(proc, &QProcess::finished, this, [this, proc](int exitCode, QProcess::ExitStatus) {
+        const QByteArray out = proc->readAllStandardOutput();
+        const QByteArray err = proc->readAllStandardError();
+        proc->deleteLater();
+        m_isBusy = false;
+        emit busyChanged();
+
+        if (!out.trimmed().isEmpty()) appendLog(QString::fromUtf8(out));
+        if (!err.trimmed().isEmpty()) appendLog(QString::fromUtf8(err));
+        if (exitCode == 0) {
+            loadModsFromDisk();
+        }
+    });
+    proc->start(QStringLiteral("node"), { QDir(m_repoRoot).filePath(QStringLiteral("src/registry.mjs")), QStringLiteral("--install"), target });
+}

@@ -4,7 +4,7 @@ const isUiEventTarget = (target) => {
     if (!target || typeof target.closest !== "function") return false;
     return Boolean(
         target.closest(
-            ".toolbar-container, #trafficity-mod-manager-root, .ui-wheel-scroll, button, input, textarea, select",
+            '.toolbar-container, #trafficity-mod-manager-root, #tmod-measuring-grid-hud, [id^="tmod-overlay-"], .ui-wheel-scroll, button, input, textarea, select',
         ),
     );
 };

@@ -266,6 +266,9 @@ export const createMeasuringGridController = (game, configApi) => {
             <button id="tmod-grid-plus" title="Coarser Grid (])">+</button>
         `;
         document.body.appendChild(hud);
+        for (const type of ["mousedown", "mouseup", "pointerdown", "pointerup", "click", "dblclick", "contextmenu", "wheel"]) {
+            hud.addEventListener(type, (e) => e.stopPropagation());
+        }
         hud.querySelector("#tmod-grid-toggle").addEventListener("click", toggle);
         hud.querySelector("#tmod-grid-snap").addEventListener("click", toggleSnap);
         hud.querySelector("#tmod-grid-minus").addEventListener("click", () => stepPreset(-1));

@@ -1,0 +1,34 @@
+name: Release Mods
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "release-*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-mods:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package example mods into ZIPs
+        run: |
+          mkdir -p dist-zips
+          for dir in examples/*/; do
+            name=$(basename "$dir")
+            (cd "$dir" && zip -r "../../dist-zips/${name}.zip" . -x "*.test.mjs")
+          done
+          ls -lh dist-zips/
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-zips/*.zip
+            registry.json
+          generate_release_notes: true

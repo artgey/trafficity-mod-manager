@@ -83,6 +83,12 @@ ApplicationWindow {
             }
 
             ActionButton {
+                text: "Open Game"
+                enabled: backend.isFound
+                onClicked: backend.openGame()
+            }
+
+            ActionButton {
                 text: "Refresh"
                 enabled: !backend.isBusy
                 onClicked: backend.refresh()
@@ -193,12 +199,63 @@ ApplicationWindow {
             }
         }
 
-        // Installed Mods List
-        Text {
-            text: "Installed Mods (" + backend.mods.length + ")"
-            color: "#e2e8f0"
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
+        // Installed Mods / Registry Tabs
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            property int activeTab: 0
+            id: tabRow
+
+            ActionButton {
+                text: "Installed Mods (" + backend.mods.length + ")"
+                primary: tabRow.activeTab === 0
+                onClicked: tabRow.activeTab = 0
+            }
+
+            ActionButton {
+                text: "Community Registry (" + backend.registryMods.length + ")"
+                primary: tabRow.activeTab === 1
+                onClicked: {
+                    tabRow.activeTab = 1
+                    if (backend.registryMods.length === 0) {
+                        backend.fetchRegistry()
+                    }
+                }
+            }
+
+            Item { Layout.fillWidth: true }
+
+            TextField {
+                id: urlInstallField
+                visible: tabRow.activeTab === 1
+                Layout.preferredWidth: 240
+                placeholderText: "Direct .zip URL..."
+                placeholderTextColor: "#64748b"
+                color: "#e6edf7"
+                font.pixelSize: 12
+                selectByMouse: true
+                background: Rectangle {
+                    radius: 5
+                    color: "#0b0e14"
+                    border.width: 1
+                    border.color: urlInstallField.activeFocus ? "#3b82f6" : "#2a3446"
+                }
+            }
+
+            ActionButton {
+                visible: tabRow.activeTab === 1
+                text: "Install URL"
+                enabled: !backend.isBusy && urlInstallField.text.trim().length > 0
+                onClicked: backend.installMod(urlInstallField.text)
+            }
+
+            ActionButton {
+                visible: tabRow.activeTab === 1
+                text: "Fetch Registry"
+                enabled: !backend.isBusy
+                onClicked: backend.fetchRegistry()
+            }
         }
 
         Rectangle {
@@ -212,6 +269,7 @@ ApplicationWindow {
 
             ListView {
                 id: modList
+                visible: tabRow.activeTab === 0
                 anchors.fill: parent
                 anchors.margins: 10
                 spacing: 8
@@ -283,10 +341,85 @@ ApplicationWindow {
                 }
             }
 
+            ListView {
+                id: regList
+                visible: tabRow.activeTab === 1
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 8
+                model: backend.registryMods
+
+                delegate: Rectangle {
+                    width: regList.width
+                    implicitHeight: regRow.implicitHeight + 18
+                    radius: 7
+                    color: "#1c2432"
+                    border.width: 1
+                    border.color: "#2a3446"
+
+                    RowLayout {
+                        id: regRow
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 12
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 3
+
+                            RowLayout {
+                                spacing: 8
+                                Text {
+                                    text: modelData.name
+                                    color: "#f8fafc"
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    text: "v" + modelData.version
+                                    color: "#94a3b8"
+                                    font.pixelSize: 11
+                                }
+                                Text {
+                                    visible: modelData.author.length > 0
+                                    text: "by " + modelData.author
+                                    color: "#94a3b8"
+                                    font.pixelSize: 11
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: modelData.description.length > 0
+                                text: modelData.description
+                                color: "#cbd5e1"
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        ActionButton {
+                            text: "Install"
+                            primary: true
+                            enabled: !backend.isBusy
+                            onClicked: backend.installMod(modelData.id)
+                        }
+                    }
+                }
+            }
+
             Text {
                 anchors.centerIn: parent
-                visible: backend.mods.length === 0
-                text: "No mods installed yet. Click 'Install Example Mods' or 'Open Mods Folder'."
+                visible: tabRow.activeTab === 0 && backend.mods.length === 0
+                text: "No mods installed yet. Click 'Install Example Mods' or switch to Community Registry."
+                color: "#94a3b8"
+                font.pixelSize: 13
+            }
+
+            Text {
+                anchors.centerIn: parent
+                visible: tabRow.activeTab === 1 && backend.registryMods.length === 0
+                text: "Click 'Fetch Registry' to load community mods from GitHub."
                 color: "#94a3b8"
                 font.pixelSize: 13
             }

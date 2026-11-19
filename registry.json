@@ -1,0 +1,36 @@
+[
+  {
+    "id": "toolbelt-hotkeys",
+    "name": "Toolbelt Hotkeys & Control Enhancements",
+    "version": "2.0.0",
+    "author": "Trafficity Mod Manager",
+    "description": "1-9/0 toolbelt slots, wheel cycling + Ctrl+scroll zoom, Q toggle deletion, Shift+Del traffic eraser, context-aware E property shift, right-click idle pan, Shift+right-click delete, click-and-drag placement, Alt+1/2/3 speed, and Mouse Back/Forward Undo/Redo.",
+    "optionalDependencies": ["redo-mod"],
+    "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/toolbelt-hotkeys-mod.zip"
+  },
+  {
+    "id": "redo-mod",
+    "name": "Redo Support",
+    "version": "1.0.0",
+    "author": "Trafficity Mod Manager",
+    "description": "Adds a Redo stack on top of Trafficity's undo journal, provides the 'redo' service for other mods, and binds Ctrl+Y / Ctrl+Shift+Z.",
+    "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/redo-mod.zip"
+  },
+  {
+    "id": "snap-perf-fix",
+    "name": "Roundabout & Road Snap Lag Fix",
+    "version": "1.0.0",
+    "author": "Trafficity Mod Manager",
+    "description": "Eliminates frame drops when connecting roads to roundabouts or autoconnecting by memoizing snap queries and bounding the 60-step midpoint overlap loop.",
+    "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/snap-perf-fix-mod.zip"
+  },
+  {
+    "id": "measuring-grid",
+    "name": "Measuring Grid & Snap Overlay",
+    "version": "1.1.0",
+    "author": "Trafficity Mod Manager",
+    "description": "Togglable world measuring grid (Alt+G) calibrated to road step spacing (3u) and lane width (20u), with [ and ] granularity controls and optional Alt+S road-point snapping.",
+    "optionalDependencies": ["snap-perf-fix"],
+    "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/measuring-grid-mod.zip"
+  }
+]
