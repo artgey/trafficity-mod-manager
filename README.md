@@ -65,6 +65,8 @@ Tagging a release (`git tag v1.3.0 && git push --tags`) automatically packages `
 
 ## Mod Format & API Documentation
 
+See [`MODDING.md`](MODDING.md) for a guide to writing mods, extending types, and reading the example mods, and [`docs/api.html`](docs/api.html) for the full `TrafficityMods` API reference.
+
 Create a folder inside `mods/` containing a `mod.json` manifest and an optional ES module `mod.js` and CSS files:
 
 ```json
