@@ -432,10 +432,18 @@ mods.use("redo")?.redo();</code></pre>
       </div>
 
       <div class="method-card">
-        <div class="method-sig">TrafficityMods.getConfig(modId) / await TrafficityMods.setConfig(modId, data)</div>
+        <div class="method-sig">TrafficityMods.getConfig(modId, defaults?) / await TrafficityMods.setConfig(modId, data)</div>
         <p>
-          Reads or persists a plain JSON configuration object for <code>modId</code> in
-          <code>AppData/Roaming/Trafficity/mods-config.json</code> via <code>POST /api/mods/config</code>.
+          Reads or persists configuration for <code>modId</code> in its in-folder <code>settings.toml</code> (if present) or
+          <code>AppData/Roaming/Trafficity/mods-config.json</code> via <code>POST /api/mods/config</code>, merged over optional <code>defaults</code>.
+        </p>
+      </div>
+
+      <div class="method-card">
+        <div class="method-sig">TrafficityMods.defineMod(setupMod) / export default function(modApi, game)</div>
+        <p>
+          Optional ES module entrypoint pattern: if a mod's <code>entry</code> exports a default function, the loader invokes it automatically with
+          <code>(TrafficityMods, TrafficityMods.game)</code>.
         </p>
       </div>
 
@@ -535,6 +543,21 @@ mods.use("redo")?.redo();</code></pre>
             <td><code>game.getCameraState()</code></td>
             <td><code>{ x, y, zoom, width, height } | null</code></td>
             <td>Reads <code>mapContainer.position</code>, <code>saveState.cameraZoom</code>, and renderer screen dimensions.</td>
+          </tr>
+          <tr>
+            <td><code>game.worldToScreen(x, y)</code> / <code>game.screenToWorld(x, y)</code></td>
+            <td><code>{ x, y } | null</code></td>
+            <td>Converts between Trafficity world coordinates and screen pixel coordinates using <code>getCameraState()</code>.</td>
+          </tr>
+          <tr>
+            <td><code>game.on(event, handler)</code></td>
+            <td><code>() =&gt; void</code></td>
+            <td>Subscribes to high-level lifecycle events: <code>"ready"</code>, <code>"cursorModeChange"</code>, <code>"worldChange"</code>, and <code>"roadPlaced"</code>. Returns an unsubscribe function.</td>
+          </tr>
+          <tr>
+            <td><code>game.configureSnapSearch(opts)</code></td>
+            <td><code>{ maxSteps, stride, suppressLog }</code></td>
+            <td>Configures midpoint-overlap snap search bounds and console log suppression without touching internal globals.</td>
           </tr>
           <tr>
             <td><code>game.getConstants()</code></td>

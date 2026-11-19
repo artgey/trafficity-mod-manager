@@ -285,8 +285,15 @@ void Backend::loadModsFromDisk() {
                 }
             }
         } else {
-            const QString exampleDir = QDir(m_repoRoot).filePath(QStringLiteral("examples/%1").arg(folder));
-            if (QDir(exampleDir).exists() && computeModCodeHash(exampleDir) == currentHash) {
+            QDir examplesRoot(QDir(m_repoRoot).filePath(QStringLiteral("examples")));
+            for (const QFileInfo &exEntry : examplesRoot.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+                if (computeModCodeHash(exEntry.absoluteFilePath()) == currentHash) {
+                    isUnedited = true;
+                    break;
+                }
+            }
+            if (!isUnedited && obj.value(QStringLiteral("author")).toString() == QStringLiteral("Trafficity Mod Manager") &&
+                obj.value(QStringLiteral("forkedFrom")).toObject().isEmpty()) {
                 isUnedited = true;
             }
         }
@@ -473,6 +480,15 @@ void Backend::openApiDocs() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(docsPath));
     } else {
         appendLog(QStringLiteral("API docs not found at %1").arg(docsPath));
+    }
+}
+
+void Backend::openModdingGuide() {
+    const QString guidePath = QDir(m_repoRoot).filePath(QStringLiteral("MODDING.md"));
+    if (QFile::exists(guidePath)) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(guidePath));
+    } else {
+        openApiDocs();
     }
 }
 

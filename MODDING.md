@@ -6,10 +6,11 @@ Mods are folders inside Trafficity's `mods/` directory containing a `mod.json` m
 
 ```text
 my-mod/
-  mod.json     # Required manifest
-  mod.js       # Entry ES module
-  style.css    # Optional stylesheet injected into <head>
-  types.d.ts   # Optional LSP type extensions (never name this mod.d.ts)
+  mod.json       # Required manifest (id, name, version, entry, forkedFrom, ...)
+  mod.js         # Entry ES module (export default function(modApi, game))
+  style.css      # Optional stylesheet injected into <head>
+  settings.toml  # Optional user-editable settings (rendered in UI & F9 drawer)
+  types.d.ts     # Optional LSP type extensions (never name this mod.d.ts)
 ```
 
 ### `mod.json`
@@ -71,22 +72,28 @@ Always prefer `modApi` (`window.TrafficityMods`) and `game`:
 
 - **[`examples/toolbelt-hotkeys-mod`](examples/toolbelt-hotkeys-mod/mod.js)**:
   - Uses `game.watchToolbelt(...)` + `game.addButtonHint(...)` to annotate toolbar buttons.
+  - Reads configurable keybindings from [`settings.toml`](examples/toolbelt-hotkeys-mod/settings.toml) via `modApi.getConfig("toolbelt-hotkeys")`.
   - Binds `1`–`0`, `Alt+1`/`2`/`3`, `q`, `e` (conditional pass-through), and mouse wheel/drag/side-button shortcuts.
-  - Consumes `mods.use("redo")` when `redo-mod` is enabled.
+  - Consumes `modApi.use("redo")` when `redo-mod` is enabled.
   - Extends `TrafficityGameFacade` in [`types.d.ts`](examples/toolbelt-hotkeys-mod/types.d.ts) with `addSlotBadge`.
 - **[`examples/redo-mod`](examples/redo-mod/mod.js)**:
-  - Reads `game.getUndoApi()` to wrap `applyUndoSubRecord` / `undoLastAction` and maintain a Redo stack.
-  - Plays `"placeRoad"` SFX via `game.playSfx(...)` and exposes `{ redo, canRedo, clear }` via `mods.provide("redo", ...)`.
-  - Declares its service type in [`types.d.ts`](examples/redo-mod/types.d.ts) so dependent mods get autocomplete on `mods.use("redo")`.
+  - Waits for `game.on("ready", ...)` and reads `game.getUndoApi()` to wrap `applyUndoSubRecord` / `undoLastAction` and maintain a Redo stack.
+  - Plays `"placeRoad"` SFX via `game.playSfx(...)` and exposes `{ redo, canRedo, clear }` via `modApi.provide("redo", ...)`.
+  - Declares its service type in [`types.d.ts`](examples/redo-mod/types.d.ts) so dependent mods get autocomplete on `modApi.use("redo")`.
 - **[`examples/measuring-grid-mod`](examples/measuring-grid-mod/mod.js)**:
-  - Reads `game.getCameraState()` and `game.getConstants()` (`laneWidth`, `lanePointSpacing`) to render a world-aligned grid canvas.
+  - Uses `game.on("ready" / "cursorModeChange", ...)` and reads `game.getCameraState()` and `game.getConstants()` (`laneWidth`, `lanePointSpacing`) to render a world-aligned grid canvas.
   - Mounts a HUD whose mouse/wheel events call `e.stopPropagation()` so clicking HUD buttons never triggers road placement.
 - **[`examples/snap-perf-fix-mod`](examples/snap-perf-fix-mod/mod.js)**:
-  - Wraps `game.getSnapApi().snapModule.findBestPointSnap` with per-frame memoization and configures `__trafficityMaxSnapSearchSteps` / `__trafficitySnapSearchStride` / `__trafficitySuppressSnapLog`.
+  - Uses `game.on("ready", ...)` and `game.configureSnapSearch({ maxSteps, stride, suppressLog })` alongside `game.getSnapApi()` memoization.
+
+## 4. `settings.toml`, Scaffolding, Forking & Packaging
+
+- **Settings (`settings.toml`):** Declare `[settingKey]` tables with `label`, `description`, `type` (`"boolean"`, `"number"`, `"string"`, `"select"`), `options`, and `value` (or flat `key = value`). Editable directly on disk, in the `F9` in-game drawer, or in the Qt6 UI **Settings** dialog.
+- **Create, Fork, Zip & Publish:** Use the **Mod Studio** tab in `npm run app` (or `npm run new-mod <id>`, `npm run fork-mod <mod>`, `npm run pack-mod <dir>`). Forked mods automatically record `forkedFrom` and `lineage` traceback metadata in `mod.json` and `registry.json` exports, and unmodified mods are marked **Unedited** until you customize `mod.js`, `mod.json`, or `style.css`.
 
 ---
 
-## 4. LSP, Autocomplete & Extending Types
+## 5. LSP, Autocomplete & Extending Types
 
 - Repo-wide JS LSP is configured in [`jsconfig.json`](jsconfig.json) with base types in [`types/trafficity-mods.d.ts`](types/trafficity-mods.d.ts).
 - When installing mods via `npm run install-mod` (or `src/registry.mjs`), `jsconfig.json` and `.tmod-types/trafficity-mods.d.ts` are also provisioned in your `mods/` folder.

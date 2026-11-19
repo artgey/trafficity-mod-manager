@@ -599,12 +599,42 @@ ApplicationWindow {
 
             // Mod Studio Tab (Scaffold, Settings, Zip, Publish)
             ColumnLayout {
+                id: studioCol
+                property bool showScaffoldForm: false
                 visible: tabRow.activeTab === 2
                 anchors.fill: parent
                 anchors.margins: 12
                 spacing: 10
 
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    ActionButton {
+                        text: studioCol.showScaffoldForm ? "Hide New Mod Form" : "Create New Mod"
+                        primary: !studioCol.showScaffoldForm
+                        onClicked: studioCol.showScaffoldForm = !studioCol.showScaffoldForm
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        textFormat: Text.RichText
+                        text: "Here you can <a href=\"modding\" style=\"color:#60a5fa;\">learn how to mod</a> using this modloader."
+                        color: "#94a3b8"
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        onLinkActivated: backend.openModdingGuide()
+
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        }
+                    }
+                }
+
                 Rectangle {
+                    visible: studioCol.showScaffoldForm
                     Layout.fillWidth: true
                     radius: 7
                     color: "#1c2432"
@@ -688,49 +718,52 @@ ApplicationWindow {
                                 text: "Create Mod"
                                 primary: true
                                 enabled: !backend.isBusy && newModIdField.text.trim().length > 0
-                                onClicked: backend.scaffoldMod(
-                                    newModIdField.text,
-                                    newModNameField.text,
-                                    newModAuthorField.text,
-                                    newModDescField.text,
-                                    chkStyle.checked,
-                                    chkSettings.checked,
-                                    chkTypes.checked,
-                                    chkExample.checked
-                                )
+                                onClicked: {
+                                    backend.scaffoldMod(
+                                        newModIdField.text,
+                                        newModNameField.text,
+                                        newModAuthorField.text,
+                                        newModDescField.text,
+                                        chkStyle.checked,
+                                        chkSettings.checked,
+                                        chkTypes.checked,
+                                        chkExample.checked
+                                    )
+                                    studioCol.showScaffoldForm = false
+                                }
                             }
                         }
+                    }
+                }
 
-                        Rectangle {
-                            visible: backend.lastCreatedModPath.length > 0
+                Rectangle {
+                    visible: backend.lastCreatedModPath.length > 0
+                    Layout.fillWidth: true
+                    implicitHeight: savedRow.implicitHeight + 12
+                    radius: 6
+                    color: "#133022"
+                    border.width: 1
+                    border.color: "#22c55e"
+
+                    RowLayout {
+                        id: savedRow
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.margins: 8
+                        spacing: 8
+
+                        Text {
                             Layout.fillWidth: true
-                            implicitHeight: savedRow.implicitHeight + 12
-                            radius: 6
-                            color: "#133022"
-                            border.width: 1
-                            border.color: "#22c55e"
+                            text: "Mod saved to: " + backend.lastCreatedModPath
+                            color: "#86efac"
+                            font.pixelSize: 12
+                            elide: Text.ElideMiddle
+                        }
 
-                            RowLayout {
-                                id: savedRow
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.margins: 8
-                                spacing: 8
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "Mod saved to: " + backend.lastCreatedModPath
-                                    color: "#86efac"
-                                    font.pixelSize: 12
-                                    elide: Text.ElideMiddle
-                                }
-
-                                ActionButton {
-                                    text: "Open Folder"
-                                    onClicked: backend.openPath(backend.lastCreatedModPath)
-                                }
-                            }
+                        ActionButton {
+                            text: "Open Folder"
+                            onClicked: backend.openPath(backend.lastCreatedModPath)
                         }
                     }
                 }

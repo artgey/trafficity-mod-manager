@@ -81,6 +81,7 @@ public:
     Q_INVOKABLE void applyHealthFix(const QString &fixAction);
     Q_INVOKABLE void openModsFolder();
     Q_INVOKABLE void openApiDocs();
+    Q_INVOKABLE void openModdingGuide();
     Q_INVOKABLE void openGame();
     Q_INVOKABLE void clearLog();
 

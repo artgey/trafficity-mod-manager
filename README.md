@@ -21,7 +21,7 @@ npm install && npm run app
 
 On Windows, double-click [`launch-app.bat`](launch-app.bat) (launches `bin\trafficity-mod-manager.exe` if present, or opens a CLI menu for patching/restoring/status since the bundled `bin/` binary is currently Linux-only).
 
-From the UI you can check game status, patch or restore `app.asar`, install the example mods, toggle mods on/off, open the mods folder natively, and open `docs/api.html`.
+From the UI you can check game status and **Health Check** diagnostics, patch or restore `app.asar`, launch Trafficity (**Open Game**), install/toggle/remove/fork mods, edit in-folder `settings.toml` settings, scaffold/zip/publish mods in **Mod Studio**, open the mods folder natively, and open `docs/api.html` or `MODDING.md`.
 
 ## Quick Start (CLI)
 
@@ -34,8 +34,14 @@ Other CLI commands:
 
 ```bash
 npm run status                         # Inspect game detection, release, and hook status (JSON)
+npm run health                         # Run full environment, ASAR, mod, and dependency health check
 npm run restore                        # Revert resources/app.asar from app.asar.bak
-npm test                               # Run patcher, mod-api, loader, and all example mod tests
+npm run new-mod <id>                   # Scaffold a new mod folder (mod.json, mod.js, settings.toml, types.d.ts)
+npm run fork-mod <dir-or-id>           # Fork a mod with forkedFrom/lineage traceback metadata
+npm run pack-mod <mod-dir>             # Package a mod into <id>.zip and print SHA-256 + registry.json entry
+npm run typecheck                      # Run tsc -p jsconfig.json --noEmit
+npm test                               # Run typecheck plus all unit/integration tests
+npm run test:ui                        # Run Qt6 Backend headless self-test
 node src/patch.mjs --game-dir <path>   # Override auto-detected Steam install directory
 ```
 
