@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
+import { createZipBuffer } from "../src/mod-tools.mjs";
 import { extractZipBuffer, installModByIdOrUrl } from "../src/registry.mjs";
 
 const buildTestZip = (entries) => {
@@ -113,13 +114,86 @@ test("installModByIdOrUrl fetches registry, verifies sha256, and installs deflat
     baseUrl = `http://127.0.0.1:${server.address().port}`;
 
     try {
+        // Seed an existing differently-named folder with the same mod.json id
+        await fsp.mkdir(path.join(modsDir, "sample-mod-old-folder"), { recursive: true });
+        await fsp.writeFile(
+            path.join(modsDir, "sample-mod-old-folder", "mod.json"),
+            JSON.stringify({ id: "sample-mod", name: "Sample Mod" }),
+        );
+
         const result = await installModByIdOrUrl("sample-mod", {
             registryUrl: `${baseUrl}/registry.json`,
             modsDir,
         });
         assert.equal(result.id, "sample-mod");
+        assert.equal(fs.existsSync(path.join(modsDir, "sample-mod-old-folder")), false);
         assert.equal(fs.existsSync(path.join(modsDir, "sample-mod", "mod.json")), true);
         assert.equal(fs.readFileSync(path.join(modsDir, "sample-mod", "mod.js"), "utf-8"), "console.log('hi');");
+        assert.equal(fs.existsSync(path.join(modsDir, "jsconfig.json")), true);
+        assert.equal(fs.existsSync(path.join(modsDir, ".tmod-types", "trafficity-mods.d.ts")), true);
+    } finally {
+        server.close();
+        await fsp.rm(tmp, { recursive: true, force: true });
+    }
+});
+
+test("extractZipBuffer and installModByIdOrUrl reject corrupt ZIPs, sha256 mismatches, missing manifests, and HTTP errors", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "tmod-reg-adv-"));
+    const modsDir = path.join(tmp, "mods");
+    await fsp.mkdir(modsDir, { recursive: true });
+
+    await assert.rejects(() => extractZipBuffer(Buffer.from("not a zip"), modsDir), /Invalid ZIP/i);
+
+    const noManifestZip = createZipBuffer([{ name: "mod.js", data: "console.log(1);" }]);
+    const validZip = createZipBuffer([
+        { name: "mod.json", data: JSON.stringify({ id: "bad-sha", name: "Bad SHA" }) },
+        { name: "mod.js", data: "console.log(1);" },
+    ]);
+
+    let baseUrl = "";
+    const server = http.createServer((req, res) => {
+        if (req.url === "/registry.json") {
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+                JSON.stringify([
+                    { id: "bad-sha", name: "Bad SHA", downloadUrl: `${baseUrl}/valid.zip`, sha256: "0".repeat(64) },
+                    { id: "no-manifest", name: "No Manifest", downloadUrl: `${baseUrl}/nomanifest.zip` },
+                    { id: "missing-zip", name: "Missing", downloadUrl: `${baseUrl}/missing.zip` },
+                ]),
+            );
+            return;
+        }
+        if (req.url === "/valid.zip") {
+            res.end(validZip);
+            return;
+        }
+        if (req.url === "/nomanifest.zip") {
+            res.end(noManifestZip);
+            return;
+        }
+        res.statusCode = 404;
+        res.end("not found");
+    });
+
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+    try {
+        await assert.rejects(
+            () => installModByIdOrUrl("bad-sha", { registryUrl: `${baseUrl}/registry.json`, modsDir }),
+            /SHA-256 mismatch/i,
+        );
+        await assert.rejects(
+            () => installModByIdOrUrl("no-manifest", { registryUrl: `${baseUrl}/registry.json`, modsDir }),
+            /does not contain a mod\.json/i,
+        );
+        await assert.rejects(
+            () => installModByIdOrUrl("missing-zip", { registryUrl: `${baseUrl}/registry.json`, modsDir }),
+            /404/,
+        );
+
+        const entries = await fsp.readdir(modsDir);
+        assert.deepEqual(entries, []);
     } finally {
         server.close();
         await fsp.rm(tmp, { recursive: true, force: true });
