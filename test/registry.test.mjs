@@ -199,3 +199,56 @@ test("extractZipBuffer and installModByIdOrUrl reject corrupt ZIPs, sha256 misma
         await fsp.rm(tmp, { recursive: true, force: true });
     }
 });
+
+test("syncExampleMods deduplicates, replaces modified examples, preserves settings.toml, and skips unchanged", async () => {
+    const { syncExampleMods } = await import("../src/registry.mjs");
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "tmod-sync-ex-"));
+    const examplesDir = path.join(tmp, "examples");
+    const modsDir = path.join(tmp, "mods");
+
+    try {
+        // Two mock example mods
+        const exA = path.join(examplesDir, "alpha-mod");
+        const exB = path.join(examplesDir, "beta-mod");
+        await fsp.mkdir(exA, { recursive: true });
+        await fsp.mkdir(exB, { recursive: true });
+
+        await fsp.writeFile(path.join(exA, "mod.json"), JSON.stringify({ id: "alpha", name: "Alpha", version: "2.0.0", entry: "mod.js" }));
+        await fsp.writeFile(path.join(exA, "mod.js"), "export default () => 'v2';\n");
+        await fsp.writeFile(path.join(exA, "settings.toml"), "# comment\nquota = 3\n");
+
+        await fsp.writeFile(path.join(exB, "mod.json"), JSON.stringify({ id: "beta", name: "Beta", version: "1.0.0", entry: "mod.js" }));
+        await fsp.writeFile(path.join(exB, "mod.js"), "export default () => 'beta';\n");
+
+        // Pre-seed duplicate folders for "alpha" ("alpha" + "alpha-mod") with user-customized settings.toml
+        const oldAlpha1 = path.join(modsDir, "alpha");
+        const oldAlpha2 = path.join(modsDir, "alpha-mod");
+        await fsp.mkdir(oldAlpha1, { recursive: true });
+        await fsp.mkdir(oldAlpha2, { recursive: true });
+        await fsp.writeFile(path.join(oldAlpha1, "mod.json"), JSON.stringify({ id: "alpha", name: "Alpha", version: "1.0.0", entry: "mod.js" }));
+        await fsp.writeFile(path.join(oldAlpha1, "mod.js"), "export default () => 'modified-v1';\n");
+        await fsp.writeFile(path.join(oldAlpha1, "settings.toml"), "# comment\nquota = 99\n");
+        await fsp.writeFile(path.join(oldAlpha2, "mod.json"), JSON.stringify({ id: "alpha", name: "Alpha", version: "1.0.0", entry: "mod.js" }));
+
+        const first = await syncExampleMods({ modsDir, examplesDir });
+        assert.deepEqual(first.updated, ["alpha"]);
+        assert.deepEqual(first.installed, ["beta"]);
+        assert.deepEqual(first.unchanged, []);
+        assert.equal(first.deduplicated, 1);
+
+        // Duplicate folder removed, new code installed, user settings.toml preserved
+        assert.equal(fs.existsSync(oldAlpha2), false);
+        assert.equal(await fsp.readFile(path.join(oldAlpha1, "mod.js"), "utf8"), "export default () => 'v2';\n");
+        const preservedToml = await fsp.readFile(path.join(oldAlpha1, "settings.toml"), "utf8");
+        assert.match(preservedToml, /quota = 99/);
+
+        // Second run: both are unaffected -> unchanged
+        const second = await syncExampleMods({ modsDir, examplesDir });
+        assert.deepEqual(second.installed, []);
+        assert.deepEqual(second.updated, []);
+        assert.deepEqual(second.unchanged, ["alpha", "beta"]);
+        assert.equal(second.deduplicated, 0);
+    } finally {
+        await fsp.rm(tmp, { recursive: true, force: true });
+    }
+});
