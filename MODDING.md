@@ -34,9 +34,9 @@ my-mod/
 
 ---
 
-## 2. Public API vs `globalThis.__trafficity*`
+## 2. How to Use the Public API
 
-Write your mod entry as an `export default` function (or use `window.TrafficityMods`):
+Write your mod entry as an `export default` function (or read `window.TrafficityMods` directly):
 
 ```js
 /**
@@ -53,19 +53,124 @@ export default function initializeMod(modApi, game) {
 }
 ```
 
-Always prefer `modApi` (`window.TrafficityMods`) and `game`:
+### Core Mod Loader API (`modApi`)
 
-- **`modApi.bindKey(combo, handler)`** — Capture-phase keyboard shortcuts (`"Alt+1"`, `"Shift+Delete"`, `"q"`). Return `false` to let Trafficity handle the key natively.
-- **`modApi.onMouse(type, handler, options)`** — Capture-phase mouse/wheel/contextmenu hooks (automatically ignores synthetic events).
-- **`modApi.addOverlay(id, content)`** — Mounts an isolated HUD/panel (`#tmod-overlay-<id>`) that stops click/wheel propagation so clicking your UI won't place roads.
-- **`modApi.getConfig(id, defaults)` / `modApi.setConfig(id, config)`** — Read/write `settings.toml` or `mods-config.json` with default fallbacks.
-- **`modApi.provide(name, api)` / `modApi.use(name)`** — Share services between mods.
-- **`game.*`** — Stable wrapper over Trafficity internals (`on`, `pressButton`, `isButtonSelected`, `selectToolbeltSlot`, `cycleToolbeltSlot`, `getCursorMode`, `isIdle`, `sendSyntheticMouse`, `sendSyntheticWheel`, `watchToolbelt`, `addButtonHint`, `playSfx`, `setSpeed`, `undo`, `cancel`, `getUndoApi`, `getSnapApi`, `configureSnapSearch`, `getCameraState`, `worldToScreen`, `screenToWorld`, `getConstants`).
-  - **`game.on(event, handler)`** — Subscribe to `"ready"`, `"cursorModeChange"`, `"worldChange"`, or `"roadPlaced"` without polling or knowing internal bundle symbols. Returns an unsubscribe function.
+- **`modApi.bindKey(combo, handler)`**
+  - *What it represents:* A capture-phase keyboard shortcut registry attached to `window`.
+  - *What it does:* Intercepts key presses before Trafficity's own handlers run, ignoring editable inputs (`<input>`, `<textarea>`) and synthetic keys. Returning anything other than `false` consumes the key so the base game won't also react; returning `false` lets Trafficity handle it natively.
+  - *How to use it:*
+    ```js
+    modApi.bindKey("Alt+1", () => game.setSpeed("pause"));
+    modApi.bindKey("e", () => (game.isIdle() ? true : false)); // block when idle, pass through otherwise
+    ```
 
-### Should mods touch `globalThis.__trafficity*` directly?
+- **`modApi.onMouse(type, handler, options)`**
+  - *What it represents:* A capture-phase pointer/mouse/wheel listener (`"mousedown"`, `"mousemove"`, `"mouseup"`, `"wheel"`, `"contextmenu"`).
+  - *What it does:* Fires before Trafficity's canvas listeners and automatically skips synthetic events dispatched by `game.sendSyntheticMouse` / `game.sendSyntheticWheel` so mods never trigger their own remaps in a loop.
+  - *How to use it:*
+    ```js
+    modApi.onMouse("wheel", (wheelEvent) => {
+      if (wheelEvent.ctrlKey) return; // let zoom work
+      wheelEvent.preventDefault();
+      game.cycleToolbeltSlot(wheelEvent.deltaY > 0 ? 1 : -1);
+    }, { passive: false });
+    ```
 
-**No — always use the wrapped `mods.game.*` API** (`getCursorMode()`, `isIdle()`, `getCameraState()`, `getUndoApi()`, `getSnapApi()`, `configureSnapSearch()`, `playSfx()`, `requireRouterModule()`). The underlying `globalThis.__trafficity*` variables are internal bridges between [src/patch.mjs](src/patch.mjs) and [runtime/loader.js](runtime/loader.js) and are intentionally omitted from the public TypeScript definitions so mods stay simple and resilient across game updates.
+- **`modApi.addOverlay(id, content)`**
+  - *What it represents:* A managed DOM container (`<div id="tmod-overlay-<id>">`) appended to `document.body`.
+  - *What it does:* Mounts or updates your custom HUD HTML or `Node` and automatically stops `mousedown`, `mouseup`, `pointerdown`, `pointerup`, `click`, `dblclick`, `contextmenu`, and `wheel` propagation so clicking or scrolling your overlay **won't interact with things behind the UI**.
+  - *How to use it:*
+    ```js
+    const panel = document.createElement("div");
+    panel.innerHTML = `<button id="my-btn">Toggle</button>`;
+    panel.querySelector("#my-btn").addEventListener("click", () => game.cancel());
+    modApi.addOverlay("my-hud", panel);
+    ```
+
+- **`modApi.getConfig(id, defaults)` / `await modApi.setConfig(id, config)`**
+  - *What it represents:* Your mod's persisted configuration store.
+  - *What it does:* `getConfig` returns saved values from your mod's `settings.toml` (or `mods-config.json` if there is no `settings.toml`) merged over `defaults`. `setConfig` persists updated values via `POST /api/mods/config`.
+  - *How to use it:*
+    ```js
+    const modConfig = modApi.getConfig("my-mod", { speed: 2, showHud: true });
+    await modApi.setConfig("my-mod", { ...modConfig, speed: 4 });
+    ```
+
+- **`modApi.provide(name, api)` / `modApi.use(name)`**
+  - *What it represents:* A lightweight inter-mod service locator.
+  - *What it does:* Lets a library mod register a named API (`provide`) so other mods that declare it in `dependencies` / `optionalDependencies` can look it up (`use`, returning `null` if not installed or disabled).
+  - *How to use it:*
+    ```js
+    // In provider mod:
+    modApi.provide("redo", { redo: () => true, canRedo: () => false });
+    // In consumer mod:
+    const redoService = modApi.use("redo");
+    redoService?.redo();
+    ```
+
+### Game Facade (`game`)
+
+- **`game.on(event, handler)`**
+  - *What it represents:* High-level game lifecycle and state-change event emitter (`"ready"`, `"cursorModeChange"`, `"worldChange"`, `"roadPlaced"`).
+  - *What it does:* Emits `"ready"` once `gameState` / `undoModule` are initialized (or via microtask if already ready), and lazily watches cursor mode, `worldRevision`, and undo entries only while listeners are subscribed. Returns an unsubscribe function `() => void`.
+  - *How to use it:*
+    ```js
+    const stopWatching = game.on("cursorModeChange", (mode, previousMode) => {
+      console.log("Tool changed:", previousMode, "->", mode);
+    });
+    ```
+
+- **`game.*` helpers**
+  - *What they represent:* A stable wrapper over Trafficity's DOM toolbar, camera/world projection, audio, and internal Parcel modules.
+  - *What they do:*
+    - **Toolbar & actions:** `pressButton`, `isButtonSelected`, `getToolbeltSlots`, `selectToolbeltSlot`, `cycleToolbeltSlot`, `watchToolbelt`, `addButtonHint`, `setSpeed`, `undo`, `cancel`, `playSfx`.
+    - **State, building & environment helpers:** `getCursorMode`, `isIdle`, `getCameraState`, `worldToScreen`, `screenToWorld`, `getConstants`, `getZoomAwareStrokeWidth`, `createDashedCircle`, `getBuildingDefinition`, `getPollutionConfig`, `setSelectionRadiusRing`, `addBuildingTooltipLine`, `onPollutionDiffusion`, `getGameRelease`.
+    - **Synthetic input & advanced internals:** `sendSyntheticMouse`, `sendSyntheticWheel`, `getUndoApi`, `getSnapApi`, `configureSnapSearch`, `hookRoundaboutPlacement`, `hookRoadPlacement`, `MODULES`, `requireModule`, `requireRouterModule`.
+  - *Typed module lookup (`game.requireModule`):* Prefer the high-level `game.*` helpers above for common tasks. When you do need raw module exports, `game.requireModule("CAMERA")` is fully typed in `types/trafficity-mods.d.ts` (`TrafficityModuleMap`). See [`docs/api.html`](docs/api.html#modules) and [`docs/internals/README.md`](docs/internals/README.md).
+
+- **`modApi.buildings`** (`CustomBuilding`, `register`, `get`, `list`)
+  - *What it represents:* A declarative custom-building registry that injects new building types into both Trafficity's main-thread Parcel modules (`4nkf2`, `aUbb1`, `fFJcz`, `jnB0a`, `2cbpn`, `6whda`, `gh1Od`, `XfMqf`) and isolated simulation Web Workers (`car-worker`, `happiness-worker`, `pathfinding-worker`).
+  - *How to use it:* Call `modApi.buildings.register(config)` (or `new modApi.buildings.CustomBuilding(config)`) during mod setup, before a map loads so worker hooks apply cleanly:
+    ```js
+    modApi.buildings.register({
+      type: "my-mod:cafe",
+      name: "Corner Cafe",
+      buildingCategory: "commercial", // "residential" | "commercial" | "office" | "industrial"
+      buildingColors: ["#e07a5f", "#f4f1de"],
+      width: 100,
+      depth: 90,
+      parkingSpaces: [20, 50, 80],    // or garage: { entrance, exit, effectiveCapacity }
+      vanCapacity: 1,
+      pollutionOutput: "none",        // "none" | "low" | "medium" | "high"
+      defaultQuota: 2,                // auto-grants toolbar quota on world load
+      getExtrusions: (w, d) => [
+        {
+          points: [
+            { x: 6, y: 20, height: 28 },
+            { x: 6, y: d - 6, height: 28 },
+            { x: w - 6, y: d - 6, height: 28 },
+            { x: w - 6, y: 20, height: 28 },
+          ],
+          roofDarkness: 0,
+          colorIndex: 0,
+        },
+      ],
+      onPlace: (gameState, buildingRecord) => { /* custom behavior */ },
+    });
+    ```
+  - *Key attributes & constrained options:*
+    - **Categories (`buildingCategory`):** `"residential"` | `"commercial"` | `"office"` | `"industrial"`.
+    - **Pollution (`pollutionOutput`):** `"none"` | `"low"` (`0.55`) | `"medium"` (`0.65`) | `"high"` (`0.75`).
+    - **Resources (`inputs` / `outputs` / `truckCapacity`):** `"food"` | `"copper"` | `"iron"` | `"steel"` | `"cpg"`.
+    - **Terrains (`requiredTerrain` / `forbiddenTerrain`):** `"water"` | `"land"` | `"mountain"` | `"void"` | `"sand"` | `"grass"` | `"wasteland"` | `"deepwasteland"` (`mineTerrain`: `"mountain"` | `"water"`).
+    - **Parking vs. Garage:** `parkingSpaces: number[]` (X-offsets along frontage) or `garage: { entrance, exit, effectiveCapacity }` (mutually exclusive).
+    - **Vehicles & Simulation:** `vehicles` (`{ cars: N }` | `{ trucks: { [res]: N } }` | `{ vans: { [res]: N } }`), `needsVisited` (`boolean`), `satisfactionWeight` (`number`), `defaultQuota` (`number`).
+    - **Lifecycle Hooks:** `onPlace(gameState, building, ctx, self)`, `onDelete(gameState, building, self)`, `onSelect(gameState, building, self)`, `onRenderWorld(parts, building, gameState, pixi, self)`.
+    - **Inspection:** `modApi.buildings.get(type)` returns the registered `CustomBuilding` or `null`; `modApi.buildings.list()` returns all registered instances.
+
+### Direct `globalThis.__trafficity*` Access
+
+We recommend starting with `modApi` and `game.*` because they are the simplest, cleanest way to write a mod and stay compatible across game updates. That said, if you know what you're doing and want direct access to the underlying `globalThis.__trafficity*` bridges populated by [src/patch.mjs](src/patch.mjs), they remain available at runtime.
 
 ---
 
@@ -85,7 +190,9 @@ Always prefer `modApi` (`window.TrafficityMods`) and `game`:
   - Uses `game.on("ready" / "cursorModeChange", ...)` and reads `game.getCameraState()` and `game.getConstants()` (`laneWidth`, `lanePointSpacing`) to render a world-aligned grid canvas.
   - Mounts a HUD whose mouse/wheel events call `e.stopPropagation()` so clicking HUD buttons never triggers road placement.
 - **[`examples/snap-perf-fix-mod`](examples/snap-perf-fix-mod/mod.js)**:
-  - Uses `game.on("ready", ...)` and `game.configureSnapSearch({ maxSteps, stride, suppressLog })` alongside `game.getSnapApi()` memoization.
+  - Uses `game.on("ready", ...)` and `game.configureSnapSearch({ maxSteps, stride, suppressLog })` alongside `game.getSnapApi()` (`aYVZj`), `8lnVn` (roundabout placement), and `hkRbw` (road-to-roundabout placement) memoization.
+- **[`examples/eco-scrubber-mod`](examples/eco-scrubber-mod/mod.js)**:
+  - Registers a custom `"eco-scrubber"` building via `modApi.buildings.register(...)` with 2.5D cylindrical/terraced extrusions, configurable `[section]` settings in [`settings.toml`](examples/eco-scrubber-mod/settings.toml), calibrated area-only pollution scrubbing (`gs8fX`), a cyan dashed preview/selection ring (`eqevD`), and a dynamic 2-line toolbar tooltip (`eAKuV`).
 
 ## 4. `settings.toml`, Scaffolding, Forking & Packaging
 
@@ -116,3 +223,19 @@ declare global {
 ```
 
 For the full API reference, open [`docs/api.html`](docs/api.html) (or click **API Docs** in `npm run app`).
+
+---
+
+## 6. Debugging Mods
+
+- **Health Check & Manifest Validation:** Run `npm run health` (or click the **Health** badge in the desktop UI) to verify `app.asar` hooks, `mod.json` syntax, `settings.toml`, missing `entry`/`styles` files, and `dependencies`.
+- **In-Game Console & Live Inspection:** Prefix logs with your mod ID (`console.log("[my-mod]", ...)`). In DevTools / the renderer console, inspect loaded mods and live state directly:
+  ```js
+  TrafficityMods.getMods();
+  TrafficityMods.game.getCursorMode();
+  TrafficityMods.game.getCameraState();
+  TrafficityMods.game.getUndoApi();
+  ```
+- **Missing Dependencies or Load Errors:** Press `F9` in-game — mods with invalid manifests or missing required dependencies are highlighted in red with the exact reason.
+- **Fast Iteration:** After editing `mod.js` or `style.css` in your `mods/` folder, click **Reload Game** inside the `F9` drawer to reload without restarting Steam.
+- **Type & Unit Checks:** Run `npm run typecheck` (`tsc -p jsconfig.json --noEmit`) to catch typos against [`types/trafficity-mods.d.ts`](types/trafficity-mods.d.ts), and `node --test` on your `mod.test.mjs` file with mocked `window`/`document` globals.

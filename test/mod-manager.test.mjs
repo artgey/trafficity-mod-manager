@@ -455,3 +455,69 @@ test("live Steam app.asar passes Router hook verification when installed", { ski
         assert.equal(check.ok, true, `Missing hooks: ${check.missing.join(", ")}`);
     }
 });
+
+test("loader buildings.register wires CustomBuilding into Parcel definition/simulation modules", () => {
+    const loaderSource = fs.readFileSync(path.resolve("runtime", "loader.js"), "utf-8");
+    const defs = [];
+    const routerModules = {
+        "4nkf2": { BUILDING_DEFINITIONS: defs, getBuildingDefinition: (t) => { throw new Error(`missing ${t}`); }, getBuildingDefaultColor: () => "#888888" },
+        aUbb1: { buildingDisplayName: (t) => t },
+        "9nNmt": { getLocalisationLanguage: () => "en" },
+        fFJcz: { getBuildingCarCountSpec: () => null, getResidentCarCountForResidentialBuildingType: () => 0, getTotalVehicleCountForBuildingType: () => 0 },
+        jnB0a: { buildingHasGetVisitedNeed: () => false },
+        "2cbpn": { getSatisfactionWeightForBuildingType: () => 15 },
+    };
+    const fakeWindow = {
+        addEventListener: () => {},
+        dispatchEvent: () => {},
+        location: { origin: "http://127.0.0.1:1234" },
+    };
+    const fakeDoc = {
+        readyState: "loading",
+        head: { appendChild: () => {} },
+        body: { appendChild: () => {} },
+        getElementById: () => null,
+        createElement: () => ({ style: {}, addEventListener: () => {}, querySelector: () => null, querySelectorAll: () => [] }),
+    };
+    class FakeXhr {
+        open() {}
+        send() { this.status = 200; this.responseText = JSON.stringify({ modsDir: "/tmp/mods", mods: [] }); }
+    }
+    const fn = new Function(
+        "window",
+        "document",
+        "globalThis",
+        "XMLHttpRequest",
+        "Node",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        loaderSource,
+    );
+    const fakeGlobal = {
+        __trafficityUndoModule: {},
+        __trafficityRouterRequire: (id) => routerModules[id] || null,
+        dispatchEvent: () => {},
+    };
+    fn(fakeWindow, fakeDoc, fakeGlobal, FakeXhr, function FakeNode() {}, () => 1, () => {});
+
+    const api = fakeWindow.TrafficityMods;
+    assert.ok(api.buildings && typeof api.buildings.CustomBuilding === "function");
+    assert.throws(() => new api.buildings.CustomBuilding({ type: "bad", buildingCategory: "spaceship" }), /Invalid buildingCategory/);
+
+    const registered = api.buildings.register({
+        type: "mod:test-tower",
+        name: "Test Tower",
+        buildingCategory: "office",
+        width: 120,
+        depth: 100,
+        satisfactionWeight: 25,
+    });
+    assert.equal(registered.type, "mod:test-tower");
+    assert.equal(defs.length, 1);
+    assert.equal(routerModules["4nkf2"].getBuildingDefinition("mod:test-tower").width, 120);
+    assert.equal(routerModules.aUbb1.buildingDisplayName("mod:test-tower"), "Test Tower");
+    assert.equal(routerModules.jnB0a.buildingHasGetVisitedNeed("mod:test-tower"), true);
+    assert.equal(routerModules["2cbpn"].getSatisfactionWeightForBuildingType("mod:test-tower"), 25);
+    assert.equal(api.game.MODULES.BUILDING_DEFINITIONS, "4nkf2");
+    assert.equal(api.game.requireModule("BUILDING_DEFINITIONS"), routerModules["4nkf2"]);
+});

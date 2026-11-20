@@ -175,7 +175,134 @@
         return buttons;
     };
 
+    const selectionRadiusRings = new Map();
+    const buildingTooltipLines = new Map();
+    const pollutionDiffusionHandlers = new Set();
+    const hookedRoundaboutModules = new WeakSet();
+    const hookedRoadPlacementModules = new WeakSet();
+    let selectionRadiusHooked = false;
+    let tooltipHooked = false;
+    let pollutionDiffusionHooked = false;
+
+    const ensureSelectionRadiusHook = () => {
+        if (selectionRadiusHooked) return;
+        const ringMod = game.requireModule("POLLUTION_RADIUS_UI");
+        if (!ringMod || typeof ringMod.setBuildingPollutionRadiusSelectionGraphic !== "function") return;
+        selectionRadiusHooked = true;
+        const origSetRing = ringMod.setBuildingPollutionRadiusSelectionGraphic;
+        overrideExport(ringMod, "setBuildingPollutionRadiusSelectionGraphic", (gameState, buildingId) => {
+            const building = gameState?.saveState?.buildings?.[buildingId];
+            const cfg = building ? selectionRadiusRings.get(building.type) : null;
+            if (cfg && typeof gameState?.setWorldSelectionGraphic === "function") {
+                const graphic = game.createDashedCircle(
+                    building.footprint.centerX,
+                    building.footprint.centerY,
+                    cfg.radius,
+                    {
+                        color: cfg.color ?? 0x00e5ff,
+                        alpha: cfg.alpha ?? 0.85,
+                        strokeWidth: game.getZoomAwareStrokeWidth(gameState.saveState?.cameraZoom),
+                    },
+                );
+                if (graphic) {
+                    gameState.setWorldSelectionGraphic(graphic);
+                    return;
+                }
+            }
+            origSetRing(gameState, buildingId);
+        });
+    };
+
+    const ensureTooltipHook = () => {
+        if (tooltipHooked) return;
+        const tooltipMod = game.requireModule("BUILDING_TOOLTIP_UI");
+        const jsxMod = game.requireModule("REACT_JSX");
+        if (!tooltipMod || typeof tooltipMod.BuildingTypeTooltip !== "function" || !jsxMod?.jsx) return;
+        tooltipHooked = true;
+        const origTooltip = tooltipMod.BuildingTypeTooltip;
+        overrideExport(tooltipMod, "BuildingTypeTooltip", (props) => {
+            const el = origTooltip(props);
+            const bType = props?.buildingDefinition?.type;
+            const entry = bType ? buildingTooltipLines.get(bType) : null;
+            if (!entry || !el?.props) return el;
+            const text = typeof entry.textOrProvider === "function"
+                ? entry.textOrProvider(props.buildingDefinition)
+                : entry.textOrProvider;
+            if (!text) return el;
+            const descLine = jsxMod.jsx("div", {
+                className: "building-type-tooltip-line",
+                style: entry.style ?? { maxWidth: "220px", whiteSpace: "normal", lineHeight: "1.3", opacity: "0.85" },
+                children: text,
+            }, `tmod-tip-${bType}`);
+            const prevChildren = Array.isArray(el.props.children) ? el.props.children : [el.props.children];
+            return { ...el, props: { ...el.props, children: [...prevChildren, descLine] } };
+        });
+    };
+
+    const ensurePollutionDiffusionHook = () => {
+        if (pollutionDiffusionHooked) return;
+        const difMod = game.requireModule("POLLUTION_DIFFUSION");
+        if (!difMod || typeof difMod.updatePollutionDiffusion !== "function") return;
+        pollutionDiffusionHooked = true;
+        const origDiffuse = difMod.updatePollutionDiffusion;
+        overrideExport(difMod, "updatePollutionDiffusion", (pollutionGrid) => {
+            origDiffuse(pollutionGrid);
+            const saveState = globalThis.__trafficityGameState?.saveState;
+            const { cellSize } = game.getPollutionConfig();
+            for (const handler of pollutionDiffusionHandlers) {
+                handler(pollutionGrid, {
+                    saveState,
+                    cellSize,
+                    getBuildingDefinition: game.getBuildingDefinition,
+                });
+            }
+        });
+    };
+
+    /** Official map of human-readable module names to Trafficity Parcel module IDs. */
+    const ROUTER_MODULES = Object.freeze({
+        // Buildings
+        BUILDING_DEFINITIONS: "4nkf2",
+        BUILDING_DISPLAY_NAMES: "aUbb1",
+        BUILDING_VEHICLE_SPECS: "fFJcz",
+        BUILDING_VISITED_NEEDS: "jnB0a",
+        BUILDING_SATISFACTION_WEIGHTS: "2cbpn",
+        BUILDING_PLACEMENT: "6whda",
+        BUILDING_DELETION: "gh1Od",
+        BUILDING_GRAPHICS: "XfMqf",
+        BUILDING_PREVIEW_UI: "iPOHp",
+        BUILDING_TOOLTIP_UI: "eAKuV",
+        BUILDING_VIEW_PANEL_UI: "aelWA",
+        // Roads & Snapping
+        ROAD_CONSTANTS: "bTgKI",
+        ROAD_SNAP: "aYVZj",
+        ROAD_PLACEMENT: "hkRbw",
+        ROAD_CONSTRUCTION: "h0N8S",
+        ROUNDABOUT_PLACEMENT: "8lnVn",
+        // Environment & Progression
+        POLLUTION_FROM_BUILDINGS: "5x7Vi",
+        POLLUTION_GRID: "d9GJQ",
+        POLLUTION_DIFFUSION: "gs8fX",
+        POLLUTION_RADIUS_UI: "eqevD",
+        LEVEL_PROGRESSION: "aigC5",
+        SCENARIOS: "a3oY4",
+        DIFFICULTY_MODES: "9colC",
+        // Camera, Audio, Graphics & UI Frameworks
+        CAMERA: "cghJ1",
+        UI_SFX: "lVhdV",
+        SOUND_LIBRARY: "8thuK",
+        MUSIC_CONTROLLER: "1JlYf",
+        I18N: "9nNmt",
+        PIXI_CONTAINER: "eicwU",
+        PIXI_GRAPHICS: "3cebA",
+        PIXI_SPRITE: "4rhnu",
+        PIXI_TEXTURE: "bLlTJ",
+        PIXI_CANVAS_SOURCE: "8xl7d",
+        REACT_JSX: "ayMG0",
+    });
+
     const game = {
+        MODULES: ROUTER_MODULES,
         requireRouterModule: (id) => {
             try {
                 return typeof globalThis.__trafficityRouterRequire === "function"
@@ -184,6 +311,10 @@
             } catch {
                 return null;
             }
+        },
+        requireModule: (nameOrId) => {
+            const resolved = ROUTER_MODULES[nameOrId] || nameOrId;
+            return game.requireRouterModule(resolved);
         },
         pressButton: (target) => {
             const el = document.querySelector(`[data-tutorial-target="${target}"]`);
@@ -339,7 +470,7 @@
                 globalThis.__trafficityPlayUiSfx(name);
                 return true;
             }
-            const sfxMod = game.requireRouterModule("lVhdV");
+            const sfxMod = game.requireModule("UI_SFX");
             if (sfxMod && typeof sfxMod.playUiSfx === "function") {
                 sfxMod.playUiSfx(name);
                 return true;
@@ -368,7 +499,7 @@
             undoDeps: globalThis.__trafficityUndoDeps || null,
         }),
         getSnapApi: () => ({
-            snapModule: globalThis.__trafficitySnapModule || game.requireRouterModule("aYVZj") || null,
+            snapModule: globalThis.__trafficitySnapModule || game.requireModule("ROAD_SNAP") || null,
         }),
         configureSnapSearch: ({ maxSteps, stride, suppressLog } = {}) => {
             if (typeof maxSteps === "number") globalThis.__trafficityMaxSnapSearchSteps = maxSteps;
@@ -408,7 +539,7 @@
             };
         },
         getConstants: () => {
-            const constantsModule = game.requireRouterModule("bTgKI");
+            const constantsModule = game.requireModule("ROAD_CONSTANTS");
             return {
                 laneWidth: constantsModule && typeof constantsModule.LANE_WIDTH === "number" ? constantsModule.LANE_WIDTH : 20,
                 lanePointSpacing:
@@ -416,6 +547,100 @@
                         ? constantsModule.LANE_POINT_SPACING
                         : 3,
             };
+        },
+        getZoomAwareStrokeWidth: (zoom) => {
+            const z = typeof zoom === "number" ? zoom : (globalThis.__trafficityGameState?.saveState?.cameraZoom ?? 1);
+            const camMod = game.requireModule("CAMERA");
+            return camMod && typeof camMod.getZoomAwareStrokeWidth === "function"
+                ? camMod.getZoomAwareStrokeWidth(z)
+                : 2;
+        },
+        createDashedCircle: (cx, cy, radius, options = {}) => {
+            const gfxMod = game.requireModule("PIXI_GRAPHICS");
+            if (!gfxMod?.Graphics) return null;
+            const g = new gfxMod.Graphics();
+            const dashLen = options.dashLength ?? 28;
+            const gapLen = options.gapLength ?? 18;
+            const circumference = 2 * Math.PI * radius;
+            let dist = 0;
+            let draw = true;
+            while (dist < circumference) {
+                const next = Math.min(dist + (draw ? dashLen : gapLen), circumference);
+                if (draw) {
+                    const a0 = dist / radius;
+                    const a1 = next / radius;
+                    const steps = Math.max(2, Math.ceil(((a1 - a0) * radius) / 6));
+                    for (let i = 0; i <= steps; i++) {
+                        const a = a0 + (i / steps) * (a1 - a0);
+                        const x = cx + Math.cos(a) * radius;
+                        const y = cy + Math.sin(a) * radius;
+                        if (i === 0) g.moveTo(x, y);
+                        else g.lineTo(x, y);
+                    }
+                }
+                dist = next;
+                draw = !draw;
+            }
+            const strokeWidth = options.strokeWidth ?? game.getZoomAwareStrokeWidth();
+            g.stroke({ width: strokeWidth, color: options.color ?? 0x00e5ff, alpha: options.alpha ?? 0.85 });
+            return g;
+        },
+        getBuildingDefinition: (type) => {
+            const defsMod = game.requireModule("BUILDING_DEFINITIONS");
+            if (!defsMod || typeof defsMod.getBuildingDefinition !== "function") return null;
+            try {
+                return defsMod.getBuildingDefinition(type);
+            } catch {
+                return null;
+            }
+        },
+        getPollutionConfig: () => {
+            const gridMod = game.requireModule("POLLUTION_GRID");
+            return {
+                cellSize: gridMod && typeof gridMod.POLLUTION_CELL_SIZE === "number" ? gridMod.POLLUTION_CELL_SIZE : 40,
+            };
+        },
+        setSelectionRadiusRing: (buildingType, options) => {
+            if (!buildingType || !options || !(options.radius > 0)) return;
+            selectionRadiusRings.set(buildingType, { ...options });
+            game.on("ready", ensureSelectionRadiusHook);
+        },
+        addBuildingTooltipLine: (buildingType, textOrProvider, style) => {
+            if (!buildingType || !textOrProvider) return;
+            buildingTooltipLines.set(buildingType, { textOrProvider, style });
+            game.on("ready", ensureTooltipHook);
+        },
+        onPollutionDiffusion: (handler) => {
+            if (typeof handler !== "function") return () => {};
+            pollutionDiffusionHandlers.add(handler);
+            game.on("ready", ensurePollutionDiffusionHook);
+            return () => pollutionDiffusionHandlers.delete(handler);
+        },
+        hookRoundaboutPlacement: (wrapperFactory) => {
+            if (typeof wrapperFactory !== "function") return;
+            const apply = () => {
+                const mod = game.requireModule("ROUNDABOUT_PLACEMENT");
+                if (!mod || typeof mod.getPlaceRoundaboutResultForSize !== "function" || hookedRoundaboutModules.has(mod)) return;
+                hookedRoundaboutModules.add(mod);
+                const wrapped = wrapperFactory(mod.getPlaceRoundaboutResultForSize);
+                if (typeof wrapped === "function") {
+                    overrideExport(mod, "getPlaceRoundaboutResultForSize", wrapped);
+                }
+            };
+            game.on("ready", apply);
+        },
+        hookRoadPlacement: (wrapperFactory) => {
+            if (typeof wrapperFactory !== "function") return;
+            const apply = () => {
+                const mod = game.requireModule("ROAD_PLACEMENT");
+                if (!mod || typeof mod.getRoadConstructionActionWithPlacement !== "function" || hookedRoadPlacementModules.has(mod)) return;
+                hookedRoadPlacementModules.add(mod);
+                const wrapped = wrapperFactory(mod.getRoadConstructionActionWithPlacement);
+                if (typeof wrapped === "function") {
+                    overrideExport(mod, "getRoadConstructionActionWithPlacement", wrapped);
+                }
+            };
+            game.on("ready", apply);
         },
         getGameRelease: () => catalog.gameRelease || null,
     };
@@ -512,6 +737,419 @@
         };
     };
 
+    const BUILDING_CATEGORIES = new Set(["residential", "commercial", "office", "industrial"]);
+    const BUILDING_POLLUTION_LEVELS = new Set(["none", "low", "medium", "high"]);
+    const BUILDING_RESOURCES = new Set(["food", "copper", "iron", "steel", "cpg"]);
+    const BUILDING_TERRAINS = new Set(["water", "land", "mountain", "void", "sand", "grass", "wasteland", "deepwasteland"]);
+    const BUILDING_CATEGORY_COLORS = { residential: "#78CC51", commercial: "#3997e4", office: "#9b59d0", industrial: "#e8bd2c" };
+
+    const overrideExport = (mod, key, value) => {
+        if (!mod || typeof mod !== "object") return;
+        Object.defineProperty(mod, key, { value, writable: true, configurable: true, enumerable: true });
+    };
+
+    /** Declarative definition and lifecycle hooks for a custom Trafficity building type. */
+    class CustomBuilding {
+        constructor(config) {
+            if (!config || typeof config.type !== "string" || !config.type.trim()) {
+                throw new Error("CustomBuilding requires a non-empty `type` string.");
+            }
+            if (!BUILDING_CATEGORIES.has(config.buildingCategory)) {
+                throw new Error(`Invalid buildingCategory "${config.buildingCategory}".`);
+            }
+            const pollutionOutput = config.pollutionOutput ?? "none";
+            if (!BUILDING_POLLUTION_LEVELS.has(pollutionOutput)) {
+                throw new Error(`Invalid pollutionOutput "${pollutionOutput}".`);
+            }
+            const width = Number(config.width ?? 110);
+            const depth = Number(config.depth ?? 90);
+            if (!(width > 0 && depth > 0)) {
+                throw new Error("Building `width` and `depth` must be positive numbers.");
+            }
+            if (config.requiredTerrain && !BUILDING_TERRAINS.has(config.requiredTerrain)) {
+                throw new Error(`Invalid requiredTerrain "${config.requiredTerrain}".`);
+            }
+            if (config.forbiddenTerrain && !BUILDING_TERRAINS.has(config.forbiddenTerrain)) {
+                throw new Error(`Invalid forbiddenTerrain "${config.forbiddenTerrain}".`);
+            }
+            if (config.mineTerrain && config.mineTerrain !== "mountain" && config.mineTerrain !== "water") {
+                throw new Error(`Invalid mineTerrain "${config.mineTerrain}".`);
+            }
+            const inputs = [...(config.inputs ?? [])];
+            const outputs = [...(config.outputs ?? [])];
+            for (const r of [...inputs, ...outputs]) {
+                if (!BUILDING_RESOURCES.has(r)) throw new Error(`Invalid resource "${r}".`);
+            }
+            if (config.garage && (typeof config.garage.entrance !== "number" || typeof config.garage.exit !== "number" || !(config.garage.effectiveCapacity > 0))) {
+                throw new Error("`garage` requires numeric `{ entrance, exit, effectiveCapacity > 0 }`.");
+            }
+
+            this.type = config.type.trim();
+            this.name = config.name ?? this.type;
+            this.localizedNames = config.localizedNames ?? null;
+            this.buildingCategory = config.buildingCategory;
+            this.buildingColors = Array.isArray(config.buildingColors) && config.buildingColors.length > 0
+                ? [...config.buildingColors]
+                : [BUILDING_CATEGORY_COLORS[this.buildingCategory]];
+            this.width = width;
+            this.depth = depth;
+            this.pollutionOutput = pollutionOutput;
+            this.pollutionAffectsHappiness = Boolean(config.pollutionAffectsHappiness ?? this.buildingCategory === "residential");
+            this.garage = config.garage ? { ...config.garage } : null;
+            this.parkingSpaces = this.garage
+                ? []
+                : Array.isArray(config.parkingSpaces) ? [...config.parkingSpaces] : [Math.round(width / 2)];
+            this.inputs = inputs;
+            this.outputs = outputs;
+            this.vanCapacity = typeof config.vanCapacity === "number" ? config.vanCapacity : undefined;
+            this.truckCapacity = config.truckCapacity ? { ...config.truckCapacity } : undefined;
+            this.requiredTerrain = config.requiredTerrain;
+            this.forbiddenTerrain = config.forbiddenTerrain;
+            this.mineTerrain = config.mineTerrain;
+            this.labelY = config.labelY;
+            this.vehicles = config.vehicles ?? null;
+            this.needsVisited = typeof config.needsVisited === "boolean" ? config.needsVisited : this.buildingCategory !== "residential";
+            this.satisfactionWeight = typeof config.satisfactionWeight === "number"
+                ? config.satisfactionWeight
+                : this.buildingCategory === "industrial" ? 20 : 15;
+            this.defaultQuota = typeof config.defaultQuota === "number" ? config.defaultQuota : 0;
+            this._extrusionFactory = typeof config.getExtrusions === "function"
+                ? config.getExtrusions
+                : (w, d) => [{
+                    points: [
+                        { x: 4, y: Math.min(20, d * 0.25), height: config.extrusionHeight ?? 35 },
+                        { x: 4, y: d - 4, height: config.extrusionHeight ?? 35 },
+                        { x: w - 4, y: d - 4, height: config.extrusionHeight ?? 35 },
+                        { x: w - 4, y: Math.min(20, d * 0.25), height: config.extrusionHeight ?? 35 },
+                    ],
+                    roofDarkness: 0,
+                }];
+            this._hooks = {
+                onPlace: config.onPlace ?? null,
+                onDelete: config.onDelete ?? null,
+                onSelect: config.onSelect ?? null,
+                onRenderWorld: config.onRenderWorld ?? null,
+            };
+        }
+
+        toWorkerSafeDefinition() {
+            const def = {
+                type: this.type,
+                buildingCategory: this.buildingCategory,
+                buildingColors: [...this.buildingColors],
+                pollutionOutput: this.pollutionOutput,
+                width: this.width,
+                depth: this.depth,
+                parkingSpaces: [...this.parkingSpaces],
+                inputs: [...this.inputs],
+                outputs: [...this.outputs],
+            };
+            if (this.pollutionAffectsHappiness) def.pollutionAffectsHappiness = true;
+            if (this.garage) {
+                def.parkingGarageEntrance = this.garage.entrance;
+                def.parkingGarageExit = this.garage.exit;
+                def.parkingGarageEffectiveCapacity = this.garage.effectiveCapacity;
+            }
+            if (this.vanCapacity !== undefined) def.vanCapacity = this.vanCapacity;
+            if (this.truckCapacity !== undefined) def.truckCapacity = { ...this.truckCapacity };
+            if (this.requiredTerrain !== undefined) def.requiredTerrain = this.requiredTerrain;
+            if (this.forbiddenTerrain !== undefined) def.forbiddenTerrain = this.forbiddenTerrain;
+            if (this.mineTerrain !== undefined) def.mineTerrain = this.mineTerrain;
+            if (this.labelY !== undefined) def.labelY = this.labelY;
+            return def;
+        }
+
+        toMainDefinition() {
+            return { ...this.toWorkerSafeDefinition(), getExtrusions: (w, d) => this._extrusionFactory(w, d, this) };
+        }
+
+        getDisplayName(lang = "en") {
+            return this.localizedNames ? (this.localizedNames[lang] ?? this.localizedNames.en ?? this.name) : this.name;
+        }
+
+        getTotalVehicleCount() {
+            if (!this.vehicles) return 0;
+            if ("cars" in this.vehicles) return this.vehicles.cars || 0;
+            let total = 0;
+            for (const map of [this.vehicles.trucks, this.vehicles.vans]) {
+                if (map) for (const n of Object.values(map)) total += n;
+            }
+            return total;
+        }
+    }
+
+    const customBuildings = new Map();
+    let buildingHooksAttached = false;
+    let workerHookInstalled = false;
+    let lastSelectedBuildingId = null;
+
+    const injectBuildingsIntoWorkerSource = (source, entries) => {
+        const bootAnchor = ',l("fHJ87")';
+        const idx = source.lastIndexOf(bootAnchor);
+        if (idx === -1) return source;
+        const injection = `,(() => {
+            const entries = ${JSON.stringify(entries)};
+            const byType = new Map(entries.map((x) => [x.def.type, x]));
+            const setExp = (m, k, v) => Object.defineProperty(m, k, { value: v, writable: true, configurable: true, enumerable: true });
+            const defMod = l("aS4Aq");
+            const origGetDef = defMod.getBuildingDefinition;
+            setExp(defMod, "getBuildingDefinition", (t) => byType.has(t) ? byType.get(t).def : origGetDef(t));
+            try {
+                const visMod = l("6hect");
+                const origVis = visMod.buildingHasGetVisitedNeed;
+                setExp(visMod, "buildingHasGetVisitedNeed", (t) => byType.has(t) ? Boolean(byType.get(t).needsVisited) : origVis(t));
+            } catch {}
+            try {
+                const carMod = l("3baQI");
+                if (carMod && typeof carMod.getBuildingCarCountSpec === "function") {
+                    const oSpec = carMod.getBuildingCarCountSpec;
+                    const oRes = carMod.getResidentCarCountForResidentialBuildingType;
+                    const oTot = carMod.getTotalVehicleCountForBuildingType;
+                    setExp(carMod, "getBuildingCarCountSpec", (t) => byType.has(t) ? byType.get(t).vehicles : oSpec(t));
+                    setExp(carMod, "getResidentCarCountForResidentialBuildingType", (t) => {
+                        const hit = byType.get(t);
+                        return hit ? (hit.vehicles && "cars" in hit.vehicles ? hit.vehicles.cars : 0) : oRes(t);
+                    });
+                    setExp(carMod, "getTotalVehicleCountForBuildingType", (t) => {
+                        const hit = byType.get(t);
+                        if (!hit) return oTot(t);
+                        const v = hit.vehicles;
+                        if (!v) return 0;
+                        if ("cars" in v) return v.cars || 0;
+                        let n = 0;
+                        for (const o of [v.trucks, v.vans]) if (o) for (const c of Object.values(o)) n += c;
+                        return n;
+                    });
+                }
+            } catch {}
+        })()`;
+        return source.slice(0, idx) + injection + source.slice(idx);
+    };
+
+    const installWorkerBuildingHook = () => {
+        if (workerHookInstalled || typeof window.Worker !== "function") return;
+        workerHookInstalled = true;
+        const NativeWorker = window.Worker;
+        window.Worker = function PatchedTrafficityWorker(scriptURL, options) {
+            const urlStr = String(scriptURL);
+            const isGameWorker = !options?.type && (
+                urlStr.includes("car-worker") || urlStr.includes("happiness-worker") || urlStr.includes("pathfinding-worker")
+            );
+            if (!isGameWorker || customBuildings.size === 0 || typeof XMLHttpRequest !== "function") {
+                return new NativeWorker(scriptURL, options);
+            }
+            try {
+                const xhr = new XMLHttpRequest();
+                xhr.open("GET", urlStr, false);
+                xhr.send(null);
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    const payload = [...customBuildings.values()].map((b) => ({
+                        def: b.toWorkerSafeDefinition(),
+                        vehicles: b.vehicles,
+                        needsVisited: b.needsVisited,
+                    }));
+                    const patched = injectBuildingsIntoWorkerSource(xhr.responseText, payload);
+                    const blobUrl = URL.createObjectURL(new Blob([patched], { type: "application/javascript" }));
+                    return new NativeWorker(blobUrl, options);
+                }
+            } catch (err) {
+                console.warn("[TrafficityMods] Worker building patch fallback:", err);
+            }
+            return new NativeWorker(scriptURL, options);
+        };
+        window.Worker.prototype = NativeWorker.prototype;
+    };
+    installWorkerBuildingHook();
+
+    const attachMainBuildingHooks = () => {
+        if (buildingHooksAttached || customBuildings.size === 0) return;
+        const defsMod = game.requireModule("BUILDING_DEFINITIONS");
+        if (!defsMod || !Array.isArray(defsMod.BUILDING_DEFINITIONS)) return;
+        buildingHooksAttached = true;
+
+        const upsertMain = (b) => {
+            const def = b.toMainDefinition();
+            const idx = defsMod.BUILDING_DEFINITIONS.findIndex((d) => d.type === b.type);
+            if (idx !== -1) defsMod.BUILDING_DEFINITIONS[idx] = def;
+            else defsMod.BUILDING_DEFINITIONS.push(def);
+        };
+        for (const b of customBuildings.values()) upsertMain(b);
+
+        const origGetDef = defsMod.getBuildingDefinition;
+        const origGetColor = defsMod.getBuildingDefaultColor;
+        overrideExport(defsMod, "getBuildingDefinition", (t) => customBuildings.has(t) ? customBuildings.get(t).toMainDefinition() : origGetDef(t));
+        overrideExport(defsMod, "getBuildingDefaultColor", (t) => customBuildings.has(t) ? customBuildings.get(t).buildingColors[0] : origGetColor(t));
+
+        const displayMod = game.requireModule("BUILDING_DISPLAY_NAMES");
+        const i18nMod = game.requireModule("I18N");
+        if (displayMod?.buildingDisplayName) {
+            const origName = displayMod.buildingDisplayName;
+            overrideExport(displayMod, "buildingDisplayName", (t) => {
+                const b = customBuildings.get(t);
+                if (!b) return origName(t);
+                const lang = typeof i18nMod?.getLocalisationLanguage === "function" ? i18nMod.getLocalisationLanguage() : "en";
+                return b.getDisplayName(lang);
+            });
+        }
+
+        const carSpecMod = game.requireModule("BUILDING_VEHICLE_SPECS");
+        if (carSpecMod) {
+            const oSpec = carSpecMod.getBuildingCarCountSpec;
+            const oRes = carSpecMod.getResidentCarCountForResidentialBuildingType;
+            const oTot = carSpecMod.getTotalVehicleCountForBuildingType;
+            overrideExport(carSpecMod, "getBuildingCarCountSpec", (t) => customBuildings.has(t) ? customBuildings.get(t).vehicles : oSpec(t));
+            overrideExport(carSpecMod, "getResidentCarCountForResidentialBuildingType", (t) => {
+                const b = customBuildings.get(t);
+                return b ? (b.vehicles && "cars" in b.vehicles ? b.vehicles.cars : 0) : oRes(t);
+            });
+            overrideExport(carSpecMod, "getTotalVehicleCountForBuildingType", (t) => customBuildings.has(t) ? customBuildings.get(t).getTotalVehicleCount() : oTot(t));
+        }
+
+        const visitedMod = game.requireModule("BUILDING_VISITED_NEEDS");
+        if (visitedMod?.buildingHasGetVisitedNeed) {
+            const oVis = visitedMod.buildingHasGetVisitedNeed;
+            overrideExport(visitedMod, "buildingHasGetVisitedNeed", (t) => customBuildings.has(t) ? customBuildings.get(t).needsVisited : oVis(t));
+        }
+
+        const satMod = game.requireModule("BUILDING_SATISFACTION_WEIGHTS");
+        if (satMod?.getSatisfactionWeightForBuildingType) {
+            const oSat = satMod.getSatisfactionWeightForBuildingType;
+            overrideExport(satMod, "getSatisfactionWeightForBuildingType", (t) => customBuildings.has(t) ? customBuildings.get(t).satisfactionWeight : oSat(t));
+        }
+
+        const placeMod = game.requireModule("BUILDING_PLACEMENT");
+        if (placeMod) {
+            const finalizePlaced = (st, prevIds, deps) => {
+                for (const [id, rec] of Object.entries(st.saveState?.buildings || {})) {
+                    if (prevIds.has(id)) continue;
+                    const b = customBuildings.get(rec.type);
+                    if (!b) continue;
+                    if (b.buildingCategory === "residential" && b.vehicles && "cars" in b.vehicles && b.vehicles.cars > 0) {
+                        if (!b.garage) {
+                            for (let i = 0; i < Math.min(b.vehicles.cars, b.parkingSpaces.length); i++) {
+                                deps?.spawnOutdoorResidentialCar?.(rec.id, rec.type, rec.footprint, i, st);
+                            }
+                        }
+                    }
+                    b._hooks.onPlace?.(st, rec, { placementDeps: deps }, b);
+                }
+            };
+            const oPlace = placeMod.placeBuildingsFromFootprints;
+            const oRestore = placeMod.restoreBuildingsAtFootprints;
+            overrideExport(placeMod, "placeBuildingsFromFootprints", (st, typeName, fps, deps, sfx) => {
+                const prev = new Set(Object.keys(st.saveState?.buildings || {}));
+                const res = oPlace(st, typeName, fps, deps, sfx);
+                finalizePlaced(st, prev, deps);
+                return res;
+            });
+            overrideExport(placeMod, "restoreBuildingsAtFootprints", (st, items, deps) => {
+                const prev = new Set(Object.keys(st.saveState?.buildings || {}));
+                const res = oRestore(st, items, deps);
+                finalizePlaced(st, prev, deps);
+                return res;
+            });
+        }
+
+        const delMod = game.requireModule("BUILDING_DELETION");
+        if (delMod?.deleteBuildingsFromGameState) {
+            const oDel = delMod.deleteBuildingsFromGameState;
+            overrideExport(delMod, "deleteBuildingsFromGameState", (st, ids) => {
+                const deleting = [];
+                for (const id of ids) {
+                    const rec = st.saveState?.buildings?.[id];
+                    const b = rec ? customBuildings.get(rec.type) : null;
+                    if (rec && b) deleting.push([rec, b]);
+                }
+                const res = oDel(st, ids);
+                for (const [rec, b] of deleting) b._hooks.onDelete?.(st, rec, b);
+                return res;
+            });
+        }
+
+        const gfxMod = game.requireModule("BUILDING_GRAPHICS");
+        if (gfxMod) {
+            const pixi = {
+                Container: game.requireModule("PIXI_CONTAINER")?.Container,
+                Graphics: game.requireModule("PIXI_GRAPHICS")?.Graphics,
+                Sprite: game.requireModule("PIXI_SPRITE")?.Sprite,
+                Texture: game.requireModule("PIXI_TEXTURE")?.Texture,
+                CanvasSource: game.requireModule("PIXI_CANVAS_SOURCE")?.CanvasSource,
+            };
+            const oCreate = gfxMod.createBuildingGraphicsParts;
+            const oUpdate = gfxMod.updateBuildingGraphics;
+            overrideExport(gfxMod, "createBuildingGraphicsParts", (st, rec, opts) => {
+                const parts = oCreate(st, rec, opts);
+                const b = customBuildings.get(rec.type);
+                b?._hooks.onRenderWorld?.(parts, rec, st, pixi, b);
+                return parts;
+            });
+            overrideExport(gfxMod, "updateBuildingGraphics", (st, rec, opts) => {
+                oUpdate(st, rec, opts);
+                const b = customBuildings.get(rec.type);
+                if (!b?._hooks.onRenderWorld) return;
+                const obj = st.buildingGraphics?.object?.get(rec.id);
+                if (obj) {
+                    b._hooks.onRenderWorld({
+                        object: obj,
+                        ground: st.buildingGraphics.ground?.get(rec.id),
+                        groundSidewalk: st.buildingGraphics.groundSidewalk?.get(rec.id),
+                        shadow: st.buildingGraphics.shadow?.get(rec.id),
+                    }, rec, st, pixi, b);
+                }
+            });
+        }
+
+        window.addEventListener("click", () => queueMicrotask(() => {
+            const st = globalThis.__trafficityGameState;
+            if (!st?.worldSelection) return;
+            const selId = st.worldSelection.type === "building" ? st.worldSelection.buildingId : null;
+            if (selId === lastSelectedBuildingId) return;
+            lastSelectedBuildingId = selId;
+            if (selId !== null) {
+                const rec = st.saveState?.buildings?.[selId];
+                const b = rec ? customBuildings.get(rec.type) : null;
+                b?._hooks.onSelect?.(st, rec, b);
+            }
+        }), true);
+
+        const seedQuotas = () => {
+            const st = globalThis.__trafficityGameState;
+            if (!st?.saveState?.cumulativeBuildingCount) return;
+            let changed = false;
+            for (const b of customBuildings.values()) {
+                if (b.defaultQuota > 0 && st.saveState.cumulativeBuildingCount[b.type] === undefined) {
+                    st.saveState.cumulativeBuildingCount[b.type] = b.defaultQuota;
+                    changed = true;
+                }
+            }
+            if (changed) st.requestUiRefresh?.();
+        };
+        game.on("worldChange", seedQuotas);
+        seedQuotas();
+    };
+
+    const buildingsApi = {
+        CustomBuilding,
+        register: (configOrInstance) => {
+            const b = configOrInstance instanceof CustomBuilding ? configOrInstance : new CustomBuilding(configOrInstance);
+            customBuildings.set(b.type, b);
+            if (buildingHooksAttached) {
+                const defsMod = game.requireModule("BUILDING_DEFINITIONS");
+                if (defsMod?.BUILDING_DEFINITIONS) {
+                    const idx = defsMod.BUILDING_DEFINITIONS.findIndex((d) => d.type === b.type);
+                    const def = b.toMainDefinition();
+                    if (idx !== -1) defsMod.BUILDING_DEFINITIONS[idx] = def;
+                    else defsMod.BUILDING_DEFINITIONS.push(def);
+                }
+            } else {
+                game.on("ready", attachMainBuildingHooks);
+            }
+            return b;
+        },
+        get: (type) => customBuildings.get(type) || null,
+        list: () => [...customBuildings.values()],
+    };
+
     const UI_ISOLATION_EVENTS = [
         "mousedown",
         "mouseup",
@@ -535,6 +1173,7 @@
     const api = {
         version: "1.4.1",
         game,
+        buildings: buildingsApi,
         extendGame: (methods) => {
             if (methods && typeof methods === "object") {
                 Object.assign(game, methods);
