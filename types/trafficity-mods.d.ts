@@ -175,6 +175,67 @@ declare global {
         getGameRelease(): string | null;
     }
 
+    /** Configuration for `TrafficityMods.buildings.register()`. */
+    interface TrafficityCustomBuildingConfig {
+        type: string;
+        buildingCategory: "residential" | "commercial" | "office" | "industrial";
+        name?: string;
+        localizedNames?: Record<string, string>;
+        buildingColors?: string[];
+        width?: number;
+        depth?: number;
+        parkingSpaces?: number[];
+        garage?: { entrance: number; exit: number; effectiveCapacity: number } | null;
+        inputs?: Array<"food" | "copper" | "iron" | "steel" | "cpg">;
+        outputs?: Array<"food" | "copper" | "iron" | "steel" | "cpg">;
+        vanCapacity?: number;
+        truckCapacity?: Partial<Record<"food" | "copper" | "iron" | "steel" | "cpg", number>>;
+        pollutionOutput?: "none" | "low" | "medium" | "high";
+        pollutionAffectsHappiness?: boolean;
+        requiredTerrain?: "water" | "land" | "mountain" | "void" | "sand" | "grass" | "wasteland" | "deepwasteland";
+        forbiddenTerrain?: "water" | "land" | "mountain" | "void" | "sand" | "grass" | "wasteland" | "deepwasteland";
+        mineTerrain?: "mountain" | "water";
+        labelY?: number;
+        extrusionHeight?: number;
+        getExtrusions?: (width: number, depth: number, building: TrafficityCustomBuilding) => Array<{
+            points: Array<{ x: number; y: number; height: number; nextEdgeOffsetOverride?: number }>;
+            roofDarkness: number;
+            colorIndex?: number;
+            roofDirectionOverride?: number;
+            skipRoofOutline?: boolean;
+        }>;
+        vehicles?: { cars: number } | { trucks: Record<string, number> } | { vans: Record<string, number> } | null;
+        needsVisited?: boolean;
+        satisfactionWeight?: number;
+        defaultQuota?: number;
+        onPlace?: (gameState: any, buildingRecord: any, context: { placementDeps: any }, building: TrafficityCustomBuilding) => void;
+        onDelete?: (gameState: any, buildingRecord: any, building: TrafficityCustomBuilding) => void;
+        onSelect?: (gameState: any, buildingRecord: any, building: TrafficityCustomBuilding) => void;
+        onRenderWorld?: (parts: { object: any; ground: any; groundSidewalk: any; shadow: any }, buildingRecord: any, gameState: any, pixi: any, building: TrafficityCustomBuilding) => void;
+    }
+
+    /** Registered custom building instance. */
+    interface TrafficityCustomBuilding {
+        readonly type: string;
+        readonly name: string;
+        readonly buildingCategory: "residential" | "commercial" | "office" | "industrial";
+        readonly width: number;
+        readonly depth: number;
+        defaultQuota: number;
+        toWorkerSafeDefinition(): Record<string, unknown>;
+        toMainDefinition(): Record<string, unknown>;
+        getDisplayName(lang?: string): string;
+        getTotalVehicleCount(): number;
+    }
+
+    /** Custom building registry exposed at `TrafficityMods.buildings`. */
+    interface TrafficityBuildingsApi {
+        CustomBuilding: new (config: TrafficityCustomBuildingConfig) => TrafficityCustomBuilding;
+        register(configOrInstance: TrafficityCustomBuildingConfig | TrafficityCustomBuilding): TrafficityCustomBuilding;
+        get(type: string): TrafficityCustomBuilding | null;
+        list(): TrafficityCustomBuilding[];
+    }
+
     /** Primary mod loader API exposed on `window.TrafficityMods`. */
     interface TrafficityModsApi {
         /** Mod loader API version string. */
@@ -182,6 +243,9 @@ declare global {
 
         /** High-level game interaction facade. */
         readonly game: TrafficityGameFacade;
+
+        /** Custom building registration API (main thread + simulation workers). */
+        readonly buildings: TrafficityBuildingsApi;
 
         /** Merge additional helper methods onto `TrafficityMods.game` at runtime. */
         extendGame<T extends Record<string, unknown>>(methods: T): TrafficityGameFacade & T;
