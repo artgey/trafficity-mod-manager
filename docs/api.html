@@ -461,6 +461,13 @@ mods.use("redo")?.redo();</code></pre>
         </p>
       </div>
 
+      <div class="method-card">
+        <div class="method-sig">TrafficityMods.buildings.register(configOrInstance)</div>
+        <p>
+          Registers a custom building type (<code>CustomBuilding</code>) into Trafficity's main-thread building/simulation/UI modules and isolated Web Workers, with support for procedural 2.5D <code>getExtrusions</code>, quotas, and <code>onPlace</code>/<code>onDelete</code>/<code>onSelect</code>/<code>onRenderWorld</code> hooks. Also exposes <code>CustomBuilding</code>, <code>get(type)</code>, and <code>list()</code>.
+        </p>
+      </div>
+
       <h2 id="game-facade">Game Facade: <code>window.TrafficityMods.game</code></h2>
       <p>
         High-level helpers abstracting Trafficity's React toolbar DOM, world coordinates, audio, input events, and internal Parcel modules.
