@@ -1,4 +1,5 @@
 const getModApi = () => (typeof window !== "undefined" ? window.TrafficityMods : null);
+const CACHE_LIMIT = 32;
 
 export const fingerprintStartPoint = (startPoint) => {
     if (!startPoint) return "none";
@@ -14,11 +15,57 @@ export const fingerprintStartPoint = (startPoint) => {
     return String(startPoint.type || "unknown");
 };
 
+const quantizeStepForZoom = (cameraZoom) => {
+    const z = Math.max(0.25, Number(cameraZoom) || 1);
+    return Math.max(2, Math.min(8, 2 / z));
+};
+
+const createLruWorldCache = () => {
+    let lastSaveState = null;
+    let lastRevision = null;
+    const map = new Map();
+
+    const sync = (saveState) => {
+        const rev = saveState?.worldRevision ?? -1;
+        if (saveState !== lastSaveState || rev !== lastRevision) {
+            map.clear();
+            lastSaveState = saveState;
+            lastRevision = rev;
+        }
+    };
+
+    return {
+        get(saveState, key) {
+            sync(saveState);
+            if (!map.has(key)) return undefined;
+            const val = map.get(key);
+            map.delete(key);
+            map.set(key, val);
+            return val;
+        },
+        set(saveState, key, val) {
+            sync(saveState);
+            if (map.has(key)) map.delete(key);
+            else if (map.size >= CACHE_LIMIT) map.delete(map.keys().next().value);
+            map.set(key, val);
+        },
+        clear() {
+            map.clear();
+            lastSaveState = null;
+            lastRevision = null;
+        },
+    };
+};
+
 export const createSnapPerfController = (options = {}) => {
-    const maxSteps = options.maxSteps ?? 5;
-    const stride = options.stride ?? 3;
+    const maxSteps = options.maxSteps ?? 3;
+    const stride = options.stride ?? 4;
     let hookedModule = null;
-    let snapCache = null;
+    let hookedRoundaboutModule = null;
+    let hookedPlacementModule = null;
+    const snapCache = createLruWorldCache();
+    const roundaboutCache = createLruWorldCache();
+    const placementCache = createLruWorldCache();
 
     const applyTuning = () => {
         const modApi = getModApi();
@@ -37,51 +84,106 @@ export const createSnapPerfController = (options = {}) => {
 
     const installHook = () => {
         applyTuning();
+        const modApi = getModApi();
         const snapModule = readSnapModule();
-        if (!snapModule || hookedModule === snapModule || typeof snapModule.getNearestLaneCreationPoint !== "function") {
-            return false;
+        let didHook = false;
+
+        if (snapModule && hookedModule !== snapModule && typeof snapModule.getNearestLaneCreationPoint === "function") {
+            const originalGetNearestPoint = snapModule.getNearestLaneCreationPoint;
+            Object.defineProperty(snapModule, "getNearestLaneCreationPoint", {
+                configurable: true,
+                enumerable: true,
+                value: (gameState, worldX, worldY, roadDefinition, startPoint) => {
+                    const saveState = gameState?.saveState;
+                    const step = quantizeStepForZoom(saveState?.cameraZoom);
+                    const cacheKey = [
+                        Math.round(worldX / step),
+                        Math.round(worldY / step),
+                        roadDefinition?.name ?? "",
+                        saveState?.roadPlacementElevation ?? 0,
+                        saveState?.roadPlacementMode ?? "",
+                        saveState?.angleSnappingEnabled ? 1 : 0,
+                        gameState?.keysPressed?.has?.("shift") ? 1 : 0,
+                        fingerprintStartPoint(startPoint),
+                    ].join("|");
+
+                    const cached = snapCache.get(saveState, cacheKey);
+                    if (cached !== undefined) {
+                        if (gameState) {
+                            gameState.draftMidpointToMidpointNinetySnapActive = cached.ninetySnapActive;
+                        }
+                        return cached.result;
+                    }
+
+                    const result = originalGetNearestPoint(gameState, worldX, worldY, roadDefinition, startPoint);
+                    snapCache.set(saveState, cacheKey, {
+                        result,
+                        ninetySnapActive: Boolean(gameState?.draftMidpointToMidpointNinetySnapActive),
+                    });
+                    return result;
+                },
+            });
+            hookedModule = snapModule;
+            didHook = true;
         }
-        const originalGetNearestPoint = snapModule.getNearestLaneCreationPoint;
-        Object.defineProperty(snapModule, "getNearestLaneCreationPoint", {
-            configurable: true,
-            enumerable: true,
-            value: (gameState, worldX, worldY, roadDefinition, startPoint) => {
+
+        if (modApi?.game?.hookRoundaboutPlacement && !hookedRoundaboutModule) {
+            hookedRoundaboutModule = true;
+            modApi.game.hookRoundaboutPlacement((origGetRoundabout) => (gameState, center, roundaboutSize) => {
                 const saveState = gameState?.saveState;
+                const step = quantizeStepForZoom(saveState?.cameraZoom);
                 const cacheKey = [
-                    Math.round(worldX * 2),
-                    Math.round(worldY * 2),
-                    saveState?.worldRevision ?? -1,
-                    roadDefinition?.name ?? "",
+                    Math.round((center?.x ?? 0) / step),
+                    Math.round((center?.y ?? 0) / step),
+                    roundaboutSize ?? "",
                     saveState?.roadPlacementElevation ?? 0,
-                    saveState?.roadPlacementMode ?? "",
+                    saveState?.drivingSide ?? "",
+                    saveState?.difficultyMode ?? "",
                     saveState?.angleSnappingEnabled ? 1 : 0,
-                    gameState?.keysPressed?.has?.("shift") ? 1 : 0,
-                    fingerprintStartPoint(startPoint),
                 ].join("|");
 
-                if (snapCache && snapCache.saveState === saveState && snapCache.cacheKey === cacheKey) {
-                    if (gameState) {
-                        gameState.draftMidpointToMidpointNinetySnapActive = snapCache.ninetySnapActive;
-                    }
-                    return snapCache.result;
-                }
+                const cached = roundaboutCache.get(saveState, cacheKey);
+                if (cached !== undefined) return cached;
 
-                const result = originalGetNearestPoint(gameState, worldX, worldY, roadDefinition, startPoint);
-                snapCache = {
-                    saveState,
-                    cacheKey,
-                    result,
-                    ninetySnapActive: Boolean(gameState?.draftMidpointToMidpointNinetySnapActive),
-                };
+                const result = origGetRoundabout(gameState, center, roundaboutSize);
+                roundaboutCache.set(saveState, cacheKey, result);
                 return result;
-            },
-        });
-        hookedModule = snapModule;
-        return true;
+            });
+            didHook = true;
+        }
+
+        if (modApi?.game?.hookRoadPlacement && !hookedPlacementModule) {
+            hookedPlacementModule = true;
+            modApi.game.hookRoadPlacement((origGetPlacement) => (gameState, startPoint, endPoint) => {
+                const saveState = gameState?.saveState;
+                const cacheKey = [
+                    fingerprintStartPoint(startPoint),
+                    fingerprintStartPoint(endPoint),
+                    saveState?.roadPlacementMode ?? "",
+                    saveState?.roadPlacementElevation ?? 0,
+                    saveState?.drivingSide ?? "",
+                    saveState?.difficultyMode ?? "",
+                    saveState?.angleSnappingEnabled ? 1 : 0,
+                    saveState?.money ?? 0,
+                ].join("|");
+
+                const cached = placementCache.get(saveState, cacheKey);
+                if (cached !== undefined) return cached;
+
+                const result = origGetPlacement(gameState, startPoint, endPoint);
+                placementCache.set(saveState, cacheKey, result);
+                return result;
+            });
+            didHook = true;
+        }
+
+        return didHook || (hookedModule === snapModule && Boolean(snapModule));
     };
 
     const clearCache = () => {
-        snapCache = null;
+        snapCache.clear();
+        roundaboutCache.clear();
+        placementCache.clear();
     };
 
     return { applyTuning, installHook, clearCache };
