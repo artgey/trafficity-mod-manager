@@ -510,5 +510,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         await restoreAsar(asarPath);
     } else {
         await patchAsar(asarPath);
+        if (process.env.TRAFFICITY_SKIP_EXAMPLE_SYNC !== "1") {
+            const { syncExampleMods } = await import("./registry.mjs");
+            const summary = await syncExampleMods({ modsDir: resolveDefaultModsDir() });
+            console.log(
+                `Synced examples (installed: ${summary.installed.length}, updated: ${summary.updated.length}, unchanged: ${summary.unchanged.length}, deduplicated: ${summary.deduplicated})`,
+            );
+        }
     }
 }
