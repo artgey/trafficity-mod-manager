@@ -140,6 +140,7 @@ const listMods = async (modsDir) => {
                 folder: folderName,
                 name: typeof manifest.name === "string" ? manifest.name : id,
                 version: typeof manifest.version === "string" ? manifest.version : "1.0.0",
+                modloaderVersion: typeof manifest.modloaderVersion === "string" ? manifest.modloaderVersion.trim() : "",
                 author: typeof manifest.author === "string" ? manifest.author : "",
                 description: typeof manifest.description === "string" ? manifest.description : "",
                 entry: typeof manifest.entry === "string" ? manifest.entry : null,

@@ -59,6 +59,27 @@ ApplicationWindow {
         }
     }
 
+    component LoaderVersionBadge: Rectangle {
+        property string loaderVersion: ""
+        property bool compatible: true
+        visible: loaderVersion.length > 0
+        radius: 4
+        color: compatible ? "#133022" : "#332612"
+        border.width: 1
+        border.color: compatible ? "#22c55e" : "#f59e0b"
+        implicitHeight: 18
+        implicitWidth: badgeText.implicitWidth + 10
+
+        Text {
+            id: badgeText
+            anchors.centerIn: parent
+            text: "Loader v" + loaderVersion
+            color: compatible ? "#86efac" : "#fde68a"
+            font.pixelSize: 10
+            font.weight: Font.DemiBold
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 18
@@ -79,7 +100,7 @@ ApplicationWindow {
                     font.weight: Font.Bold
                 }
                 Text {
-                    text: backend.gameRelease ? ("Release: " + backend.gameRelease) : "Steam App 5185750"
+                    text: "Modloader v" + backend.modloaderVersion + (backend.gameRelease ? ("  •  Game: " + backend.gameRelease) : "  •  Steam App 5185750")
                     color: "#94a3b8"
                     font.pixelSize: 12
                 }
@@ -391,6 +412,10 @@ ApplicationWindow {
                                     color: "#94a3b8"
                                     font.pixelSize: 11
                                 }
+                                LoaderVersionBadge {
+                                    loaderVersion: modelData.modloaderVersion || ""
+                                    compatible: modelData.loaderCompatible !== false
+                                }
                             }
 
                             Text {
@@ -550,6 +575,10 @@ ApplicationWindow {
                                     text: "by " + modelData.author
                                     color: "#94a3b8"
                                     font.pixelSize: 11
+                                }
+                                LoaderVersionBadge {
+                                    loaderVersion: modelData.modloaderVersion || ""
+                                    compatible: modelData.loaderCompatible !== false
                                 }
                             }
 
@@ -745,6 +774,13 @@ ApplicationWindow {
                     border.width: 1
                     border.color: "#22c55e"
 
+                    Timer {
+                        id: savedBannerTimer
+                        interval: 15000
+                        running: backend.lastCreatedModPath.length > 0
+                        onTriggered: backend.clearLastCreatedModPath()
+                    }
+
                     RowLayout {
                         id: savedRow
                         anchors.left: parent.left
@@ -879,6 +915,52 @@ ApplicationWindow {
                                 ToolTip.text: "Edit mod.js, mod.json, or style.css before publishing"
                                 onClicked: backend.publishMod(modelData.folder)
                             }
+
+                            Button {
+                                id: studioRemoveBtn
+                                implicitWidth: 32
+                                implicitHeight: 32
+                                enabled: !backend.isBusy
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Remove mod"
+                                onClicked: backend.removeMod(modelData.id, modelData.folder)
+
+                                background: Rectangle {
+                                    radius: 6
+                                    color: studioRemoveBtn.down ? "#7f1d1d" : (studioRemoveBtn.hovered ? "#451a1a" : "#161c26")
+                                    border.width: 1
+                                    border.color: studioRemoveBtn.hovered ? "#ef4444" : "#2a3446"
+                                }
+
+                                contentItem: Canvas {
+                                    implicitWidth: 16
+                                    implicitHeight: 16
+                                    property color iconColor: studioRemoveBtn.hovered ? "#fca5a5" : "#94a3b8"
+                                    onIconColorChanged: requestPaint()
+                                    onPaint: {
+                                        var ctx = getContext("2d");
+                                        ctx.clearRect(0, 0, width, height);
+                                        ctx.strokeStyle = iconColor;
+                                        ctx.lineWidth = 1.4;
+                                        ctx.lineCap = "round";
+                                        ctx.lineJoin = "round";
+                                        ctx.beginPath();
+                                        ctx.moveTo(6, 3);
+                                        ctx.lineTo(10, 3);
+                                        ctx.moveTo(3, 5);
+                                        ctx.lineTo(13, 5);
+                                        ctx.moveTo(4.5, 5);
+                                        ctx.lineTo(5.2, 13);
+                                        ctx.lineTo(10.8, 13);
+                                        ctx.lineTo(11.5, 5);
+                                        ctx.moveTo(7, 7.2);
+                                        ctx.lineTo(7, 11);
+                                        ctx.moveTo(9, 7.2);
+                                        ctx.lineTo(9, 11);
+                                        ctx.stroke();
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -915,7 +997,8 @@ ApplicationWindow {
     Dialog {
         id: settingsDialog
         anchors.centerIn: parent
-        width: 460
+        width: 500
+        height: Math.min(root.height - 48, 560)
         modal: true
         title: "Mod Settings — " + backend.activeSettingsModName
         property var draftValues: ({})
@@ -955,71 +1038,83 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             spacing: 10
 
-            Repeater {
-                model: backend.activeSettingsSchema
-                delegate: RowLayout {
-                    Layout.fillWidth: true
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+
+                ColumnLayout {
+                    width: parent.width
                     spacing: 10
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
-                        Text {
+                    Repeater {
+                        model: backend.activeSettingsSchema
+                        delegate: RowLayout {
                             Layout.fillWidth: true
-                            text: modelData.label || modelData.key
-                            color: "#f1f5f9"
-                            font.pixelSize: 12
-                            font.weight: Font.DemiBold
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            visible: Boolean(modelData.description && modelData.description.length > 0)
-                            text: modelData.description || ""
-                            color: "#94a3b8"
-                            font.pixelSize: 11
-                            wrapMode: Text.WordWrap
-                        }
-                    }
+                            spacing: 10
 
-                    CheckBox {
-                        visible: modelData.type === "boolean"
-                        checked: Boolean(settingsDialog.draftValues[modelData.key])
-                        onToggled: settingsDialog.draftValues[modelData.key] = checked
-                    }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData.label || modelData.key
+                                    color: "#f1f5f9"
+                                    font.pixelSize: 12
+                                    font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: Boolean(modelData.description && modelData.description.length > 0)
+                                    text: modelData.description || ""
+                                    color: "#94a3b8"
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
 
-                    TextField {
-                        visible: modelData.type !== "boolean" && modelData.type !== "select"
-                        Layout.preferredWidth: 160
-                        text: settingsDialog.draftValues[modelData.key] !== undefined ? String(settingsDialog.draftValues[modelData.key]) : ""
-                        color: "#e6edf7"
-                        font.pixelSize: 12
-                        selectByMouse: true
-                        onTextChanged: {
-                            if (modelData.type === "number") {
-                                var n = Number(text)
-                                if (!isNaN(n)) settingsDialog.draftValues[modelData.key] = n
-                            } else {
-                                settingsDialog.draftValues[modelData.key] = text
+                            CheckBox {
+                                visible: modelData.type === "boolean"
+                                checked: Boolean(settingsDialog.draftValues[modelData.key])
+                                onToggled: settingsDialog.draftValues[modelData.key] = checked
+                            }
+
+                            TextField {
+                                visible: modelData.type !== "boolean" && modelData.type !== "select"
+                                Layout.preferredWidth: 160
+                                text: settingsDialog.draftValues[modelData.key] !== undefined ? String(settingsDialog.draftValues[modelData.key]) : ""
+                                color: "#e6edf7"
+                                font.pixelSize: 12
+                                selectByMouse: true
+                                onTextChanged: {
+                                    if (modelData.type === "number") {
+                                        var n = Number(text)
+                                        if (!isNaN(n)) settingsDialog.draftValues[modelData.key] = n
+                                    } else {
+                                        settingsDialog.draftValues[modelData.key] = text
+                                    }
+                                }
+                                background: Rectangle {
+                                    radius: 5
+                                    color: "#0b0e14"
+                                    border.width: 1
+                                    border.color: "#2a3446"
+                                }
+                            }
+
+                            ComboBox {
+                                visible: modelData.type === "select"
+                                Layout.preferredWidth: 160
+                                model: modelData.options || []
+                                currentIndex: {
+                                    var opts = modelData.options || []
+                                    var cur = String(settingsDialog.draftValues[modelData.key] || "")
+                                    return Math.max(0, opts.indexOf(cur))
+                                }
+                                onActivated: settingsDialog.draftValues[modelData.key] = currentText
                             }
                         }
-                        background: Rectangle {
-                            radius: 5
-                            color: "#0b0e14"
-                            border.width: 1
-                            border.color: "#2a3446"
-                        }
-                    }
-
-                    ComboBox {
-                        visible: modelData.type === "select"
-                        Layout.preferredWidth: 160
-                        model: modelData.options || []
-                        currentIndex: {
-                            var opts = modelData.options || []
-                            var cur = String(settingsDialog.draftValues[modelData.key] || "")
-                            return Math.max(0, opts.indexOf(cur))
-                        }
-                        onActivated: settingsDialog.draftValues[modelData.key] = currentText
                     }
                 }
             }

@@ -1,4 +1,4 @@
-name: Release Mods
+name: Release Portable Bundles & Mods
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  release-mods:
+  package-mods:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,10 +25,138 @@ jobs:
           done
           ls -lh dist-zips/
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-zips
+          path: dist-zips/*.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install Qt6 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ qmake6 qt6-base-dev qt6-declarative-dev qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-templates
+
+      - name: Build UI & install production Node deps
+        run: |
+          npm ci --omit=dev
+          npm run build:ui
+
+      - name: Stage portable Linux bundle
+        run: |
+          STAGE="trafficity-mod-manager-linux-x64"
+          mkdir -p "$STAGE/bin" "$STAGE/examples"
+          cp bin/trafficity-mod-manager "$STAGE/bin/"
+          cp -r src runtime types docs node_modules "$STAGE/"
+          cp package.json package-lock.json registry.json README.md MODDING.md GAME_BINDINGS.md launch-app.sh "$STAGE/"
+          for dir in examples/*/; do
+            name=$(basename "$dir")
+            mkdir -p "$STAGE/examples/$name"
+            (cd "$dir" && tar --exclude="*.test.mjs" -cf - .) | (cd "$STAGE/examples/$name" && tar -xf -)
+          done
+          chmod +x "$STAGE/launch-app.sh" "$STAGE/bin/trafficity-mod-manager"
+          tar -czf trafficity-mod-manager-linux-x64.tar.gz "$STAGE"
+          zip -r trafficity-mod-manager-linux-x64.zip "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundle
+          path: |
+            trafficity-mod-manager-linux-x64.tar.gz
+            trafficity-mod-manager-linux-x64.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install Qt 6 (MinGW)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.7.3"
+          host: "windows"
+          target: "desktop"
+          arch: "win64_mingw"
+          modules: "qt5compat"
+          setup-python: "false"
+
+      - name: Add MinGW toolchain to PATH
+        shell: pwsh
+        run: |
+          $qtBin = Split-Path (Get-Command qmake).Source
+          $qtRoot = Split-Path (Split-Path $qtBin)
+          $mingw = Get-ChildItem -Path "$qtRoot\Tools\mingw*" -Directory | Select-Object -First 1
+          if ($mingw) {
+            Add-Content -Path $env:GITHUB_PATH -Value "$($mingw.FullName)\bin"
+          }
+
+      - name: Build Windows Qt6 Quick UI & bundle DLLs
+        shell: pwsh
+        run: |
+          npm ci --omit=dev
+          New-Item -ItemType Directory -Force -Path ui/build, bin | Out-Null
+          Push-Location ui/build
+          qmake ../trafficity-mod-manager.pro
+          mingw32-make -j4
+          Pop-Location
+          $exe = Get-ChildItem -Path ui/build -Filter "trafficity-mod-manager.exe" -Recurse | Select-Object -First 1
+          Copy-Item $exe.FullName -Destination "bin/trafficity-mod-manager.exe" -Force
+          windeployqt --qmldir ui --no-translations bin/trafficity-mod-manager.exe
+
+      - name: Stage portable Windows bundle
+        shell: pwsh
+        run: |
+          $stage = "trafficity-mod-manager-windows-x64"
+          New-Item -ItemType Directory -Force -Path "$stage\bin", "$stage\examples" | Out-Null
+          Copy-Item bin\* "$stage\bin\" -Recurse -Force
+          foreach ($d in @("src", "runtime", "types", "docs", "node_modules")) {
+            Copy-Item $d "$stage\$d" -Recurse -Force
+          }
+          foreach ($f in @("package.json", "package-lock.json", "registry.json", "README.md", "MODDING.md", "GAME_BINDINGS.md", "launch-app.bat")) {
+            Copy-Item $f "$stage\" -Force
+          }
+          Get-ChildItem examples -Directory | ForEach-Object {
+            $dst = "$stage\examples\$($_.Name)"
+            New-Item -ItemType Directory -Force -Path $dst | Out-Null
+            Copy-Item "$($_.FullName)\*" $dst -Recurse -Force -Exclude "*.test.mjs"
+          }
+          Compress-Archive -Path $stage -DestinationPath "trafficity-mod-manager-windows-x64.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: trafficity-mod-manager-windows-x64.zip
+
+  release:
+    needs: [package-mods, build-linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist-zips/*.zip
+            artifacts/dist-zips/*.zip
+            artifacts/linux-bundle/*
+            artifacts/windows-bundle/*
             registry.json
           generate_release_notes: true

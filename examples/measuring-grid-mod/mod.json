@@ -2,6 +2,7 @@
   "id": "measuring-grid",
   "name": "Measuring Grid & Snap Overlay",
   "version": "1.1.0",
+  "modloaderVersion": "1.4.1",
   "author": "Trafficity Mod Manager",
   "description": "Togglable world measuring grid (Alt+G) calibrated to road step spacing (3u) and lane width (20u), with [ and ] granularity controls and optional Alt+S road-point snapping.",
   "optionalDependencies": ["snap-perf-fix"],

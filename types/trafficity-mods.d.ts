@@ -42,6 +42,7 @@ declare global {
         dependencies?: string[];
         optionalDependencies?: string[];
         types?: string;
+        modloaderVersion?: string;
         forkedFrom?: TrafficityModForkOrigin;
         lineage?: TrafficityModForkOrigin[];
     }

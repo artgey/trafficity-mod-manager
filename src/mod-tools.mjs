@@ -127,12 +127,18 @@ export const scaffoldMod = async ({
         throw new Error(`Mod '${cleanId}' already exists at ${modDir}`);
     }
 
+    const packageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    const modloaderVersion = fs.existsSync(packageJsonPath)
+        ? JSON.parse(await fsp.readFile(packageJsonPath, "utf8")).version || "1.4.0"
+        : "1.4.0";
+
     await fsp.mkdir(modDir, { recursive: true });
     const displayName = String(name || "").trim() || cleanId;
     const manifest = {
         id: cleanId,
         name: displayName,
         version: "1.0.0",
+        modloaderVersion,
         author: String(author || "").trim() || "Trafficity Modder",
         description: String(description || "").trim() || "A custom Trafficity mod.",
         entry: "mod.js",
@@ -373,6 +379,9 @@ export const packModZip = async (modDir, outZipPath = null) => {
         id,
         name: manifest.name || id,
         version: manifest.version || "1.0.0",
+        ...(typeof manifest.modloaderVersion === "string" && manifest.modloaderVersion.trim()
+            ? { modloaderVersion: manifest.modloaderVersion.trim() }
+            : {}),
         author: manifest.author || "",
         description: manifest.description || "",
         ...(Array.isArray(manifest.dependencies) && manifest.dependencies.length > 0

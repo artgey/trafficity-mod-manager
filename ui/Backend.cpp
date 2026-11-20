@@ -15,7 +15,22 @@
 
 Backend::Backend(QObject *parent)
     : QObject(parent)
-    , m_repoRoot(findRepoRoot()) {
+    , m_repoRoot(findRepoRoot())
+    , m_modsWatcher(new QFileSystemWatcher(this))
+    , m_modsWatchTimer(new QTimer(this)) {
+    m_modsWatchTimer->setSingleShot(true);
+    m_modsWatchTimer->setInterval(250);
+    connect(m_modsWatchTimer, &QTimer::timeout, this, &Backend::loadModsFromDisk);
+    connect(m_modsWatcher, &QFileSystemWatcher::directoryChanged, this, [this]() { m_modsWatchTimer->start(); });
+    connect(m_modsWatcher, &QFileSystemWatcher::fileChanged, this, [this]() { m_modsWatchTimer->start(); });
+
+    QFile pkgFile(QDir(m_repoRoot).filePath(QStringLiteral("package.json")));
+    if (pkgFile.open(QIODevice::ReadOnly)) {
+        const QJsonDocument pkgDoc = QJsonDocument::fromJson(pkgFile.readAll());
+        pkgFile.close();
+        const QString ver = pkgDoc.object().value(QStringLiteral("version")).toString().trimmed();
+        if (!ver.isEmpty()) m_modloaderVersion = ver;
+    }
     refresh();
 }
 
@@ -172,6 +187,23 @@ void Backend::runPatcherArgs(const QStringList &args, bool isStatusQuery) {
     proc->start(QStringLiteral("node"), args);
 }
 
+static bool isLoaderCompatible(const QString &requiredRaw, const QString &currentRaw) {
+    QString req = requiredRaw.trimmed();
+    if (req.isEmpty()) return true;
+    while (!req.isEmpty() && !req.at(0).isDigit()) req.remove(0, 1);
+    const QStringList reqParts = req.split(QLatin1Char('.'));
+    const QStringList curParts = currentRaw.trimmed().split(QLatin1Char('.'));
+    if (reqParts.isEmpty() || curParts.isEmpty()) return true;
+    bool ok1 = false, ok2 = false;
+    const int reqMaj = reqParts.value(0).toInt(&ok1);
+    const int curMaj = curParts.value(0).toInt(&ok2);
+    if (!ok1 || !ok2) return true;
+    if (reqMaj != curMaj) return false;
+    const int reqMin = reqParts.value(1).toInt();
+    const int curMin = curParts.value(1).toInt();
+    return reqMin <= curMin;
+}
+
 static QString computeModCodeHash(const QString &modDir) {
     QStringList relFiles;
     auto collect = [&](auto &self, const QString &rel) -> void {
@@ -269,6 +301,9 @@ void Backend::loadModsFromDisk() {
         item[QStringLiteral("folder")] = folder;
         item[QStringLiteral("name")] = obj.value(QStringLiteral("name")).toString(id);
         item[QStringLiteral("version")] = obj.value(QStringLiteral("version")).toString(QStringLiteral("1.0.0"));
+        const QString loaderVer = obj.value(QStringLiteral("modloaderVersion")).toString().trimmed();
+        item[QStringLiteral("modloaderVersion")] = loaderVer;
+        item[QStringLiteral("loaderCompatible")] = isLoaderCompatible(loaderVer, m_modloaderVersion);
         item[QStringLiteral("author")] = obj.value(QStringLiteral("author")).toString();
         item[QStringLiteral("description")] = obj.value(QStringLiteral("description")).toString();
         const QString currentHash = computeModCodeHash(entry.absoluteFilePath());
@@ -322,6 +357,27 @@ void Backend::loadModsFromDisk() {
 
     m_mods = list;
     emit modsChanged();
+    syncModsWatcher();
+}
+
+void Backend::syncModsWatcher() {
+    if (!m_modsWatcher) return;
+    const QStringList oldDirs = m_modsWatcher->directories();
+    if (!oldDirs.isEmpty()) m_modsWatcher->removePaths(oldDirs);
+    const QStringList oldFiles = m_modsWatcher->files();
+    if (!oldFiles.isEmpty()) m_modsWatcher->removePaths(oldFiles);
+    if (m_modsDir.isEmpty() || !QDir(m_modsDir).exists()) return;
+
+    m_modsWatcher->addPath(m_modsDir);
+    const QFileInfoList subdirs = QDir(m_modsDir).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo &sub : subdirs) {
+        if (sub.fileName().startsWith(QLatin1Char('.'))) continue;
+        m_modsWatcher->addPath(sub.absoluteFilePath());
+        for (const QString &fileName : { QStringLiteral("mod.js"), QStringLiteral("mod.json"), QStringLiteral("style.css"), QStringLiteral("settings.toml") }) {
+            const QString filePath = QDir(sub.absoluteFilePath()).filePath(fileName);
+            if (QFile::exists(filePath)) m_modsWatcher->addPath(filePath);
+        }
+    }
 }
 
 void Backend::toggleMod(const QString &modId, bool enabled) {
@@ -559,6 +615,9 @@ void Backend::fetchRegistry() {
             item[QStringLiteral("id")] = obj.value(QStringLiteral("id")).toString();
             item[QStringLiteral("name")] = obj.value(QStringLiteral("name")).toString();
             item[QStringLiteral("version")] = obj.value(QStringLiteral("version")).toString(QStringLiteral("1.0.0"));
+            const QString loaderVer = obj.value(QStringLiteral("modloaderVersion")).toString().trimmed();
+            item[QStringLiteral("modloaderVersion")] = loaderVer;
+            item[QStringLiteral("loaderCompatible")] = isLoaderCompatible(loaderVer, m_modloaderVersion);
             item[QStringLiteral("author")] = obj.value(QStringLiteral("author")).toString();
             item[QStringLiteral("description")] = obj.value(QStringLiteral("description")).toString();
             item[QStringLiteral("downloadUrl")] = obj.value(QStringLiteral("downloadUrl")).toString();
@@ -689,6 +748,12 @@ void Backend::openModFolder(const QString &folderName) {
 void Backend::openPath(const QString &path) {
     if (path.isEmpty()) return;
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+void Backend::clearLastCreatedModPath() {
+    if (m_lastCreatedModPath.isEmpty()) return;
+    m_lastCreatedModPath.clear();
+    emit studioChanged();
 }
 
 void Backend::openModSettings(const QString &folderName, const QString &modName) {

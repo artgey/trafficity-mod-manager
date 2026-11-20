@@ -533,7 +533,7 @@
     };
 
     const api = {
-        version: "1.4.0",
+        version: "1.4.1",
         game,
         extendGame: (methods) => {
             if (methods && typeof methods === "object") {
@@ -693,7 +693,9 @@
     };
 
     let drawerOpen = false;
-    let dirtyRestart = false;
+    const initialEnabledById = new Map((catalog.mods || []).map((entry) => [entry.id, Boolean(entry.enabled)]));
+    const hasPendingModToggle = () =>
+        (catalog.mods || []).some((entry) => Boolean(entry.enabled) !== Boolean(initialEnabledById.get(entry.id)));
 
     const escapeHtml = (str) =>
         String(str)
@@ -712,7 +714,7 @@
 
         const list = root.querySelector("#tmod-list");
         const restartBanner = root.querySelector("#tmod-restart-banner");
-        restartBanner.style.display = dirtyRestart ? "flex" : "none";
+        restartBanner.style.display = hasPendingModToggle() ? "flex" : "none";
 
         if (!catalog.mods || catalog.mods.length === 0) {
             list.innerHTML = `<div class="tmod-empty">No mods found in:<br><code>${escapeHtml(catalog.modsDir || "")}</code><br><br>Drop a mod folder containing <code>mod.json</code> there and click Reload.</div>`;
@@ -724,42 +726,22 @@
                 const warn = dependencyWarnings.get(mod.id);
                 const deps = [...(mod.dependencies || []), ...(mod.optionalDependencies || [])];
                 const depBadge = deps.length > 0 ? `<span class="tmod-badge">${deps.length} dep${deps.length === 1 ? "" : "s"}</span>` : "";
-                const schema = Array.isArray(mod.settingsSchema) ? mod.settingsSchema : [];
-                const settingsHtml =
-                    schema.length > 0
-                        ? `<div class="tmod-settings" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);display:flex;flex-direction:column;gap:6px;">
-                            ${schema
-                                .map((s) => {
-                                    const cur = mod.config && mod.config[s.key] !== undefined ? mod.config[s.key] : s.value;
-                                    const label = escapeHtml(s.label || s.key);
-                                    if (s.type === "boolean") {
-                                        return `<label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#e2e8f0;gap:8px;"><span>${label}</span><input type="checkbox" data-setting-mod="${escapeHtml(mod.id)}" data-setting-key="${escapeHtml(s.key)}" data-setting-type="boolean" ${cur ? "checked" : ""}></label>`;
-                                    }
-                                    if (s.type === "select" && Array.isArray(s.options)) {
-                                        const opts = s.options
-                                            .map((o) => `<option value="${escapeHtml(o)}" ${String(cur) === String(o) ? "selected" : ""}>${escapeHtml(o)}</option>`)
-                                            .join("");
-                                        return `<label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#e2e8f0;gap:8px;"><span>${label}</span><select data-setting-mod="${escapeHtml(mod.id)}" data-setting-key="${escapeHtml(s.key)}" data-setting-type="select" style="background:#0f172a;color:#f8fafc;border:1px solid rgba(255,255,255,0.18);border-radius:4px;padding:2px 6px;font-size:11px;">${opts}</select></label>`;
-                                    }
-                                    const inputType = s.type === "number" ? "number" : "text";
-                                    return `<label style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#e2e8f0;gap:8px;"><span>${label}</span><input type="${inputType}" data-setting-mod="${escapeHtml(mod.id)}" data-setting-key="${escapeHtml(s.key)}" data-setting-type="${inputType}" value="${escapeHtml(cur ?? "")}" style="width:110px;background:#0f172a;color:#f8fafc;border:1px solid rgba(255,255,255,0.18);border-radius:4px;padding:2px 6px;font-size:11px;"></label>`;
-                                })
-                                .join("")}
-                           </div>`
-                        : "";
+                const loaderBadge = mod.modloaderVersion
+                    ? `<span class="tmod-badge">Loader ${escapeHtml(mod.modloaderVersion)}</span>`
+                    : "";
                 return `
                     <div class="tmod-item ${mod.error || warn ? "tmod-error" : ""}">
                         <div class="tmod-item-info" style="flex:1;min-width:0;">
                             <div class="tmod-item-title">
                                 <strong>${escapeHtml(mod.name)}</strong>
                                 <span class="tmod-ver">v${escapeHtml(mod.version)}</span>
+                                ${loaderBadge}
                                 ${depBadge}
                             </div>
                             ${mod.author ? `<div class="tmod-author">by ${escapeHtml(mod.author)}</div>` : ""}
                             ${mod.forkedFrom ? `<div class="tmod-author" style="color:#93c5fd">Forked from ${escapeHtml(mod.forkedFrom.name || mod.forkedFrom.id)} v${escapeHtml(mod.forkedFrom.version || "1.0.0")}</div>` : ""}
                             ${mod.description ? `<div class="tmod-desc">${escapeHtml(mod.description)}</div>` : ""}
                             ${warn ? `<div class="tmod-desc" style="color:#fca5a5">${escapeHtml(warn)}</div>` : ""}
-                            ${settingsHtml}
                         </div>
                         <label class="tmod-switch">
                             <input type="checkbox" data-mod-id="${escapeHtml(mod.id)}" ${mod.enabled ? "checked" : ""} ${mod.error ? "disabled" : ""}>
@@ -771,37 +753,16 @@
             .join("");
 
         for (const checkbox of list.querySelectorAll("input[type='checkbox'][data-mod-id]")) {
-            checkbox.addEventListener("change", async (e) => {
-                const id = e.target.getAttribute("data-mod-id");
-                const enabled = e.target.checked;
+            checkbox.addEventListener("change", async (event) => {
+                const id = event.target.getAttribute("data-mod-id");
+                const enabled = event.target.checked;
                 await fetch("/api/mods/toggle", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ id, enabled }),
                 });
-                const target = catalog.mods.find((m) => m.id === id);
+                const target = catalog.mods.find((entry) => entry.id === id);
                 if (target) target.enabled = enabled;
-                dirtyRestart = true;
-                renderManager();
-            });
-        }
-
-        for (const input of list.querySelectorAll("[data-setting-mod][data-setting-key]")) {
-            input.addEventListener("change", async (e) => {
-                const modId = e.target.getAttribute("data-setting-mod");
-                const key = e.target.getAttribute("data-setting-key");
-                const kind = e.target.getAttribute("data-setting-type");
-                const target = catalog.mods.find((m) => m.id === modId);
-                if (!target) return;
-                const val =
-                    kind === "boolean"
-                        ? Boolean(e.target.checked)
-                        : kind === "number"
-                          ? Number(e.target.value)
-                          : e.target.value;
-                const nextConfig = { ...(target.config || {}), [key]: val };
-                await api.setConfig(modId, nextConfig);
-                dirtyRestart = true;
                 renderManager();
             });
         }

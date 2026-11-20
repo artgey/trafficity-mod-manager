@@ -1,8 +1,10 @@
 #pragma once
 
+#include <QFileSystemWatcher>
 #include <QObject>
 #include <QProcess>
 #include <QString>
+#include <QTimer>
 #include <QVariantList>
 #include <functional>
 
@@ -11,6 +13,7 @@ class Backend : public QObject {
     Q_PROPERTY(QString gameDir READ gameDir WRITE setGameDir NOTIFY stateChanged)
     Q_PROPERTY(QString modsDir READ modsDir NOTIFY stateChanged)
     Q_PROPERTY(QString gameRelease READ gameRelease NOTIFY stateChanged)
+    Q_PROPERTY(QString modloaderVersion READ modloaderVersion NOTIFY stateChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(bool isPatched READ isPatched NOTIFY stateChanged)
     Q_PROPERTY(bool isFound READ isFound NOTIFY stateChanged)
@@ -36,6 +39,7 @@ public:
     void setGameDir(const QString &dir);
     QString modsDir() const { return m_modsDir; }
     QString gameRelease() const { return m_gameRelease; }
+    QString modloaderVersion() const { return m_modloaderVersion; }
     QString statusText() const { return m_statusText; }
     bool isPatched() const { return m_isPatched; }
     bool isFound() const { return m_isFound; }
@@ -75,6 +79,7 @@ public:
     Q_INVOKABLE void publishMod(const QString &folderName);
     Q_INVOKABLE void openModFolder(const QString &folderName);
     Q_INVOKABLE void openPath(const QString &path);
+    Q_INVOKABLE void clearLastCreatedModPath();
     Q_INVOKABLE void openModSettings(const QString &folderName, const QString &modName);
     Q_INVOKABLE void saveModSettings(const QString &folderName, const QVariantMap &values);
     Q_INVOKABLE void runHealthCheck();
@@ -102,12 +107,14 @@ private:
     void runPatcherArgs(const QStringList &args, bool isStatusQuery);
     void runNodeAsync(const QStringList &args, const std::function<void(int, const QByteArray &)> &onDone);
     void loadModsFromDisk();
+    void syncModsWatcher();
     static bool copyDirRecursive(const QString &srcPath, const QString &dstPath);
 
     QString m_repoRoot;
     QString m_gameDir;
     QString m_modsDir;
     QString m_gameRelease;
+    QString m_modloaderVersion = QStringLiteral("1.4.1");
     QString m_statusText = QStringLiteral("Checking...");
     bool m_isPatched = false;
     bool m_isFound = false;
@@ -125,4 +132,6 @@ private:
     bool m_healthOk = true;
     int m_healthWarnings = 0;
     int m_healthErrors = 0;
+    QFileSystemWatcher *m_modsWatcher = nullptr;
+    QTimer *m_modsWatchTimer = nullptr;
 };

@@ -9,9 +9,14 @@ Lightweight Mod Manager, pre-bundle Mod Loader, extensible `TrafficityMods.game`
 - **Steam-Update Resilient:** Mods and `mods-config.json` live in `AppData/Roaming/Trafficity/` (next to player saves). After a Steam game update, re-run `npm run patch` (or click **Patch Game** in the QtQuick UI) to re-apply hooks cleanly.
 - **Extensible `TrafficityMods.game` Facade & Dependency System:** Supports `dependencies` / `optionalDependencies` topological loading, `provide`/`use` inter-mod services, `extendGame`, and full HTML API documentation in [`docs/api.html`](docs/api.html).
 
-## Desktop UI
+## Desktop UI (Portable & Source)
 
-Run the pre-compiled Qt6 Quick desktop UI directly (no compilation required):
+Download the latest portable release from **GitHub Releases** (`trafficity-mod-manager-windows-x64.zip` or `trafficity-mod-manager-linux-x64.tar.gz`), unzip it, and run:
+
+- **Windows:** `launch-app.bat` (or `bin\trafficity-mod-manager.exe` directly; requires [Node.js](https://nodejs.org/) on `PATH`).
+- **Linux:** `./launch-app.sh` (or `./bin/trafficity-mod-manager`).
+
+Or from a git clone:
 
 ```bash
 ./launch-app.sh            # Linux (auto-installs npm deps if missing)
@@ -19,7 +24,7 @@ Run the pre-compiled Qt6 Quick desktop UI directly (no compilation required):
 npm install && npm run app
 ```
 
-On Windows, double-click [`launch-app.bat`](launch-app.bat) (launches `bin\trafficity-mod-manager.exe` if present, or opens a CLI menu for patching/restoring/status since the bundled `bin/` binary is currently Linux-only).
+On Windows from a git clone without a pre-built `.exe`, [`launch-app.bat`](launch-app.bat) opens a CLI menu for patching/restoring/status.
 
 From the UI you can check game status and **Health Check** diagnostics, patch or restore `app.asar`, launch Trafficity (**Open Game**), install/toggle/remove/fork mods, edit in-folder `settings.toml` settings, scaffold/zip/publish mods in **Mod Studio**, open the mods folder natively, and open `docs/api.html` or `MODDING.md`.
 

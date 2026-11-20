@@ -2,6 +2,7 @@
   "id": "redo-mod",
   "name": "Redo Support",
   "version": "1.0.0",
+  "modloaderVersion": "1.4.1",
   "author": "Trafficity Mod Manager",
   "description": "Adds a Redo stack on top of Trafficity's undo journal, provides the 'redo' service for other mods, and binds Ctrl+Y / Ctrl+Shift+Z.",
   "entry": "mod.js"
