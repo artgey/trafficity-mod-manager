@@ -87,6 +87,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Install Qt 6 (MSVC 2022)
+        id: install-qt
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.8.1"
@@ -99,17 +100,21 @@ jobs:
         shell: pwsh
         run: |
           npm ci --omit=dev
-          $qtBin = Join-Path $env:Qt6_DIR "bin"
+          $qtBin = Join-Path "${{ steps.install-qt.outputs.qt_path }}" "bin"
           $qmake = Join-Path $qtBin "qmake.exe"
           $windeployqt = Join-Path $qtBin "windeployqt.exe"
           New-Item -ItemType Directory -Force -Path ui/build, bin | Out-Null
           Push-Location ui/build
-          & $qmake ../trafficity-mod-manager.pro
+          & $qmake ../trafficity-mod-manager.pro CONFIG+=release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           nmake
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Pop-Location
           $exe = Get-ChildItem -Path ui/build -Filter "trafficity-mod-manager.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "trafficity-mod-manager.exe was not built" }
           Copy-Item $exe.FullName -Destination "bin/trafficity-mod-manager.exe" -Force
           & $windeployqt --qmldir ui --no-translations bin/trafficity-mod-manager.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Stage portable Windows bundle
         shell: pwsh
