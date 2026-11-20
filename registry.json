@@ -36,5 +36,14 @@
     "description": "Togglable world measuring grid (Alt+G) calibrated to road step spacing (3u) and lane width (20u), with [ and ] granularity controls and optional Alt+S road-point snapping.",
     "optionalDependencies": ["snap-perf-fix"],
     "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/measuring-grid-mod.zip"
+  },
+  {
+    "id": "eco-scrubber",
+    "name": "Eco-Scrubber Air Purifier",
+    "version": "1.0.0",
+    "modloaderVersion": "1.4.1",
+    "author": "Trafficity Mod Manager",
+    "description": "Adds a custom Eco-Scrubber Tower building with 2.5D procedural extrusions that actively cleans nearby air pollution around its plot.",
+    "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/eco-scrubber-mod.zip"
   }
 ]

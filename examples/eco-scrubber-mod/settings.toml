@@ -1,0 +1,55 @@
+# Eco-Scrubber Air Purifier configuration
+
+[quota]
+value = 3
+type = "number"
+min = 0
+max = 50
+label = "Starting Quota"
+description = "Number of Eco-Scrubber towers granted in the toolbar at the start of a city."
+
+[scrub_radius]
+value = 225
+type = "number"
+min = 40
+max = 1000
+label = "Scrub Radius (units)"
+description = "Cleans air pollution inside this cyan circle only. Polluting buildings still emit normally outside."
+
+[scrub_strength]
+value = "medium"
+type = "select"
+options = ["low", "medium", "high", "custom"]
+label = "Scrub Strength"
+description = "Max pollution cleared per tower: low (0.55), medium (0.65, needs 2 overlapping towers for high), high (0.75), or custom."
+
+[custom_scrub_strength]
+value = 0.65
+type = "number"
+min = 0.0
+max = 1.0
+label = "Custom Strength (Decimal)"
+description = "Used only when Scrub Strength is 'custom'. 0.00 = none, 0.55 = low, 0.65 = medium, 0.75 = high, 1.00 = max."
+
+[scrub_falloff]
+value = 0
+type = "number"
+min = 0.0
+max = 1.0
+label = "Outer Edge Falloff"
+description = "0 = uniform cleaning across the entire circle. > 0 fades strength from the inner core toward (1 - falloff) at the outer edge."
+
+[inner_radius_fraction]
+value = 0.5
+type = "number"
+min = 0.0
+max = 1.0
+label = "Inner Full-Strength Core"
+description = "Fraction of Scrub Radius kept at 100% strength before outer falloff begins (used when Outer Edge Falloff > 0)."
+
+[falloff_curve]
+value = "linear"
+type = "select"
+options = ["linear", "quadratic", "exponential", "step"]
+label = "Falloff Curve"
+description = "Shape of strength decay from the inner core to the outer edge when Outer Edge Falloff > 0."
