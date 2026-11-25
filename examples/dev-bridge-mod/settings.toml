@@ -1,0 +1,22 @@
+# Dev Console & Eval Bridge configuration
+# Enable this mod in F9 or the Mod Manager UI only when debugging.
+
+[capture_console]
+value = true
+type = "boolean"
+label = "Capture Console & Errors"
+description = "Stream console.log/warn/error and uncaught exceptions to /api/dev/console."
+
+[allow_eval]
+value = true
+type = "boolean"
+label = "Allow External Eval"
+description = "Allow local CLI/MCP tools on 127.0.0.1 to evaluate JS expressions inside the live game."
+
+[poll_interval_ms]
+value = 250
+type = "number"
+min = 50
+max = 2000
+label = "Poll & Flush Interval (ms)"
+description = "How often buffered console logs flush and pending eval commands are polled."

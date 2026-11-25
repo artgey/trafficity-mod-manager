@@ -1,0 +1,9 @@
+{
+  "id": "dev-bridge",
+  "name": "Dev Console & Eval Bridge",
+  "version": "1.0.0",
+  "modloaderVersion": "1.4.2",
+  "author": "Trafficity Mod Manager",
+  "description": "Opt-in live external console log stream and interactive JS eval bridge for CLI, agents, and MCP tools. Disabled by default.",
+  "entry": "mod.js"
+}
