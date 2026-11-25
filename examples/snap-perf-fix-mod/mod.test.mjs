@@ -16,17 +16,11 @@ test("snap-perf-fix sets tighter search bounds, zoom-aware LRU caches snap, roun
     let origSnapCalls = 0;
     let origRoundaboutCalls = 0;
     let origPlacementCalls = 0;
-    const snapModule = {};
-    Object.defineProperty(snapModule, "getNearestLaneCreationPoint", {
-        configurable: true,
-        enumerable: true,
-        get: () => (gs, x, y) => {
-            origSnapCalls += 1;
-            gs.draftMidpointToMidpointNinetySnapActive = x > 50;
-            return { type: "midpoint", x, y };
-        },
-    });
-
+    let getNearestPointFn = (gs, x, y) => {
+        origSnapCalls += 1;
+        gs.draftMidpointToMidpointNinetySnapActive = x > 50;
+        return { type: "midpoint", x, y };
+    };
     let getRoundaboutFn = (_gs, center, size) => {
         origRoundaboutCalls += 1;
         return { result: { center, size }, radius: 40 };
@@ -37,81 +31,70 @@ test("snap-perf-fix sets tighter search bounds, zoom-aware LRU caches snap, roun
     };
 
     let snapConfig = null;
-    globalThis.window = {
-        TrafficityMods: {
-            game: {
-                getSnapApi: () => ({ snapModule }),
-                hookRoundaboutPlacement: (factory) => { getRoundaboutFn = factory(getRoundaboutFn); },
-                hookRoadPlacement: (factory) => { getPlacementFn = factory(getPlacementFn); },
-                configureSnapSearch: (opts) => {
-                    snapConfig = { ...opts };
-                    return snapConfig;
-                },
-            },
+    const mockGame = {
+        hookRoadSnap: (factory) => { getNearestPointFn = factory(getNearestPointFn); return () => {}; },
+        hookRoundaboutPlacement: (factory) => { getRoundaboutFn = factory(getRoundaboutFn); return () => {}; },
+        hookRoadPlacement: (factory) => { getPlacementFn = factory(getPlacementFn); return () => {}; },
+        configureSnapSearch: (opts) => {
+            snapConfig = { ...opts };
+            return snapConfig;
         },
-        addEventListener() {},
     };
 
-    try {
-        await import(`./mod.js?t=${Date.now()}`);
-        assert.deepEqual(snapConfig, { maxSteps: 3, stride: 4, suppressLog: true });
+    const { default: setupSnapPerfFix } = await import(`./mod.js?t=${Date.now()}`);
+    setupSnapPerfFix({ game: mockGame }, mockGame);
+    assert.deepEqual(snapConfig, { maxSteps: 3, stride: 4, suppressLog: true });
 
-        const gs = {
-            saveState: {
-                worldRevision: 1,
-                cameraZoom: 0.5, // step = 4u
-                roadPlacementElevation: 0,
-                roadPlacementMode: "straight",
-                angleSnappingEnabled: true,
-            },
-            keysPressed: new Set(),
-            draftMidpointToMidpointNinetySnapActive: false,
-        };
-        const road = { name: "Two lane" };
+    const gs = {
+        saveState: {
+            worldRevision: 1,
+            cameraZoom: 0.5, // step = 4u
+            roadPlacementElevation: 0,
+            roadPlacementMode: "straight",
+            angleSnappingEnabled: true,
+        },
+        keysPressed: new Set(),
+        draftMidpointToMidpointNinetySnapActive: false,
+    };
+    const road = { name: "Two lane" };
 
-        const r1 = snapModule.getNearestLaneCreationPoint(gs, 60.1, 20.1, road, null);
-        assert.equal(origSnapCalls, 1);
-        assert.equal(gs.draftMidpointToMidpointNinetySnapActive, true);
+    const r1 = getNearestPointFn(gs, 60.1, 20.1, road, null);
+    assert.equal(origSnapCalls, 1);
+    assert.equal(gs.draftMidpointToMidpointNinetySnapActive, true);
 
-        // Jitter within 4u zoom-aware bucket -> cache hit!
-        gs.draftMidpointToMidpointNinetySnapActive = false;
-        const r2 = snapModule.getNearestLaneCreationPoint(gs, 61.2, 21.2, road, null);
-        assert.equal(origSnapCalls, 1);
-        assert.equal(r2, r1);
-        assert.equal(gs.draftMidpointToMidpointNinetySnapActive, true);
+    // Jitter within 4u zoom-aware bucket -> cache hit!
+    gs.draftMidpointToMidpointNinetySnapActive = false;
+    const r2 = getNearestPointFn(gs, 61.2, 21.2, road, null);
+    assert.equal(origSnapCalls, 1);
+    assert.equal(r2, r1);
+    assert.equal(gs.draftMidpointToMidpointNinetySnapActive, true);
 
-        // Move mouse -> cache miss; move back -> LRU hit!
-        snapModule.getNearestLaneCreationPoint(gs, 80, 20, road, null);
-        assert.equal(origSnapCalls, 2);
-        snapModule.getNearestLaneCreationPoint(gs, 60.1, 20.1, road, null);
-        assert.equal(origSnapCalls, 2);
+    // Move mouse -> cache miss; move back -> LRU hit!
+    getNearestPointFn(gs, 80, 20, road, null);
+    assert.equal(origSnapCalls, 2);
+    getNearestPointFn(gs, 60.1, 20.1, road, null);
+    assert.equal(origSnapCalls, 2);
 
-        // Roundabout placement memoization
-        const rb1 = getRoundaboutFn(gs, { x: 100, y: 100 }, "small");
-        const rb2 = getRoundaboutFn(gs, { x: 101, y: 100.5 }, "small");
-        assert.equal(origRoundaboutCalls, 1);
-        assert.equal(rb2, rb1);
+    // Roundabout placement memoization
+    const rb1 = getRoundaboutFn(gs, { x: 100, y: 100 }, "small");
+    const rb2 = getRoundaboutFn(gs, { x: 101, y: 100.5 }, "small");
+    assert.equal(origRoundaboutCalls, 1);
+    assert.equal(rb2, rb1);
 
-        // Road-to-roundabout placement memoization
-        const sPt = { type: "absolute", x: 0, y: 0, elevation: 0, lanesWide: 4 };
-        const ePt = { type: "midpoint", locator: { laneSectionId: 9, pointIndex: 12 } };
-        const p1 = getPlacementFn(gs, sPt, ePt);
-        const p2 = getPlacementFn(gs, sPt, ePt);
-        assert.equal(origPlacementCalls, 1);
-        assert.equal(p2, p1);
+    // Road-to-roundabout placement memoization
+    const sPt = { type: "absolute", x: 0, y: 0, elevation: 0, lanesWide: 4 };
+    const ePt = { type: "midpoint", locator: { laneSectionId: 9, pointIndex: 12 } };
+    const p1 = getPlacementFn(gs, sPt, ePt);
+    const p2 = getPlacementFn(gs, sPt, ePt);
+    assert.equal(origPlacementCalls, 1);
+    assert.equal(p2, p1);
 
-        // World revision change -> invalidates all caches
-        gs.saveState.worldRevision = 2;
-        snapModule.getNearestLaneCreationPoint(gs, 80, 20, road, null);
-        getRoundaboutFn(gs, { x: 100, y: 100 }, "small");
-        getPlacementFn(gs, sPt, ePt);
-        assert.equal(origSnapCalls, 3);
-        assert.equal(origRoundaboutCalls, 2);
-        assert.equal(origPlacementCalls, 2);
-    } finally {
-        delete globalThis.window;
-        delete globalThis.__trafficityMaxSnapSearchSteps;
-        delete globalThis.__trafficitySnapSearchStride;
-        delete globalThis.__trafficitySuppressSnapLog;
-    }
+    // World revision change -> invalidates all caches
+    gs.saveState.worldRevision = 2;
+    getNearestPointFn(gs, 80, 20, road, null);
+    getRoundaboutFn(gs, { x: 100, y: 100 }, "small");
+    getPlacementFn(gs, sPt, ePt);
+    assert.equal(origSnapCalls, 3);
+    assert.equal(origRoundaboutCalls, 2);
+    assert.equal(origPlacementCalls, 2);
 });

@@ -1,6 +1,6 @@
-const getModApi = () => (typeof window !== "undefined" ? window.TrafficityMods : null);
 const CACHE_LIMIT = 32;
 
+/** @param {TrafficityRoadPointRef | null | undefined} startPoint */
 export const fingerprintStartPoint = (startPoint) => {
     if (!startPoint) return "none";
     if (startPoint.type === "absolute") {
@@ -15,16 +15,24 @@ export const fingerprintStartPoint = (startPoint) => {
     return String(startPoint.type || "unknown");
 };
 
+/** @param {number | undefined} cameraZoom */
 const quantizeStepForZoom = (cameraZoom) => {
     const z = Math.max(0.25, Number(cameraZoom) || 1);
     return Math.max(2, Math.min(8, 2 / z));
 };
 
+/**
+ * @template T
+ */
 const createLruWorldCache = () => {
+    /** @type {TrafficitySaveState | null | undefined} */
     let lastSaveState = null;
+    /** @type {number | null} */
     let lastRevision = null;
+    /** @type {Map<string, T>} */
     const map = new Map();
 
+    /** @param {TrafficitySaveState | null | undefined} saveState */
     const sync = (saveState) => {
         const rev = saveState?.worldRevision ?? -1;
         if (saveState !== lastSaveState || rev !== lastRevision) {
@@ -35,18 +43,33 @@ const createLruWorldCache = () => {
     };
 
     return {
+        /**
+         * @param {TrafficitySaveState | null | undefined} saveState
+         * @param {string} key
+         * @returns {T | undefined}
+         */
         get(saveState, key) {
             sync(saveState);
             if (!map.has(key)) return undefined;
             const val = map.get(key);
-            map.delete(key);
-            map.set(key, val);
+            if (val !== undefined) {
+                map.delete(key);
+                map.set(key, val);
+            }
             return val;
         },
+        /**
+         * @param {TrafficitySaveState | null | undefined} saveState
+         * @param {string} key
+         * @param {T} val
+         */
         set(saveState, key, val) {
             sync(saveState);
             if (map.has(key)) map.delete(key);
-            else if (map.size >= CACHE_LIMIT) map.delete(map.keys().next().value);
+            else if (map.size >= CACHE_LIMIT) {
+                const oldest = map.keys().next().value;
+                if (oldest !== undefined) map.delete(oldest);
+            }
             map.set(key, val);
         },
         clear() {
@@ -57,79 +80,66 @@ const createLruWorldCache = () => {
     };
 };
 
-export const createSnapPerfController = (options = {}) => {
+/**
+ * @param {TrafficityGameFacade} game
+ * @param {{ maxSteps?: number, stride?: number }} [options]
+ */
+export const createSnapPerfController = (game, options = {}) => {
     const maxSteps = options.maxSteps ?? 3;
     const stride = options.stride ?? 4;
-    let hookedModule = null;
-    let hookedRoundaboutModule = null;
-    let hookedPlacementModule = null;
+    let hooked = false;
+    /** @type {ReturnType<typeof createLruWorldCache<{ result: TrafficityRoadPointRef | null, ninetySnapActive: boolean }>>} */
     const snapCache = createLruWorldCache();
+    /** @type {ReturnType<typeof createLruWorldCache<TrafficityRoundaboutResult>>} */
     const roundaboutCache = createLruWorldCache();
+    /** @type {ReturnType<typeof createLruWorldCache<TrafficityRoadConstructionResult>>} */
     const placementCache = createLruWorldCache();
 
     const applyTuning = () => {
-        const modApi = getModApi();
-        if (modApi && modApi.game && typeof modApi.game.configureSnapSearch === "function") {
-            modApi.game.configureSnapSearch({ maxSteps, stride, suppressLog: true });
+        if (game && typeof game.configureSnapSearch === "function") {
+            game.configureSnapSearch({ maxSteps, stride, suppressLog: true });
         }
-    };
-
-    const readSnapModule = () => {
-        const modApi = getModApi();
-        if (modApi && modApi.game && typeof modApi.game.getSnapApi === "function") {
-            return modApi.game.getSnapApi().snapModule;
-        }
-        return null;
     };
 
     const installHook = () => {
         applyTuning();
-        const modApi = getModApi();
-        const snapModule = readSnapModule();
-        let didHook = false;
+        if (hooked || !game) return hooked;
+        hooked = true;
 
-        if (snapModule && hookedModule !== snapModule && typeof snapModule.getNearestLaneCreationPoint === "function") {
-            const originalGetNearestPoint = snapModule.getNearestLaneCreationPoint;
-            Object.defineProperty(snapModule, "getNearestLaneCreationPoint", {
-                configurable: true,
-                enumerable: true,
-                value: (gameState, worldX, worldY, roadDefinition, startPoint) => {
-                    const saveState = gameState?.saveState;
-                    const step = quantizeStepForZoom(saveState?.cameraZoom);
-                    const cacheKey = [
-                        Math.round(worldX / step),
-                        Math.round(worldY / step),
-                        roadDefinition?.name ?? "",
-                        saveState?.roadPlacementElevation ?? 0,
-                        saveState?.roadPlacementMode ?? "",
-                        saveState?.angleSnappingEnabled ? 1 : 0,
-                        gameState?.keysPressed?.has?.("shift") ? 1 : 0,
-                        fingerprintStartPoint(startPoint),
-                    ].join("|");
+        if (typeof game.hookRoadSnap === "function") {
+            game.hookRoadSnap((origGetNearestPoint) => (gameState, worldX, worldY, roadDefinition, startPoint) => {
+                const saveState = gameState?.saveState;
+                const step = quantizeStepForZoom(saveState?.cameraZoom);
+                const cacheKey = [
+                    Math.round(worldX / step),
+                    Math.round(worldY / step),
+                    roadDefinition?.name ?? "",
+                    saveState?.roadPlacementElevation ?? 0,
+                    saveState?.roadPlacementMode ?? "",
+                    saveState?.angleSnappingEnabled ? 1 : 0,
+                    gameState?.keysPressed?.has?.("shift") ? 1 : 0,
+                    fingerprintStartPoint(startPoint),
+                ].join("|");
 
-                    const cached = snapCache.get(saveState, cacheKey);
-                    if (cached !== undefined) {
-                        if (gameState) {
-                            gameState.draftMidpointToMidpointNinetySnapActive = cached.ninetySnapActive;
-                        }
-                        return cached.result;
+                const cached = snapCache.get(saveState, cacheKey);
+                if (cached !== undefined) {
+                    if (gameState) {
+                        gameState.draftMidpointToMidpointNinetySnapActive = cached.ninetySnapActive;
                     }
+                    return cached.result;
+                }
 
-                    const result = originalGetNearestPoint(gameState, worldX, worldY, roadDefinition, startPoint);
-                    snapCache.set(saveState, cacheKey, {
-                        result,
-                        ninetySnapActive: Boolean(gameState?.draftMidpointToMidpointNinetySnapActive),
-                    });
-                    return result;
-                },
+                const result = origGetNearestPoint(gameState, worldX, worldY, roadDefinition, startPoint);
+                snapCache.set(saveState, cacheKey, {
+                    result,
+                    ninetySnapActive: Boolean(gameState?.draftMidpointToMidpointNinetySnapActive),
+                });
+                return result;
             });
-            hookedModule = snapModule;
-            didHook = true;
         }
 
-        if (modApi?.game?.hookRoundaboutPlacement && !hookedRoundaboutModule) {
-            hookedRoundaboutModule = true;
-            modApi.game.hookRoundaboutPlacement((origGetRoundabout) => (gameState, center, roundaboutSize) => {
+        if (typeof game.hookRoundaboutPlacement === "function") {
+            game.hookRoundaboutPlacement((origGetRoundabout) => (gameState, center, roundaboutSize) => {
                 const saveState = gameState?.saveState;
                 const step = quantizeStepForZoom(saveState?.cameraZoom);
                 const cacheKey = [
@@ -149,12 +159,10 @@ export const createSnapPerfController = (options = {}) => {
                 roundaboutCache.set(saveState, cacheKey, result);
                 return result;
             });
-            didHook = true;
         }
 
-        if (modApi?.game?.hookRoadPlacement && !hookedPlacementModule) {
-            hookedPlacementModule = true;
-            modApi.game.hookRoadPlacement((origGetPlacement) => (gameState, startPoint, endPoint) => {
+        if (typeof game.hookRoadPlacement === "function") {
+            game.hookRoadPlacement((origGetPlacement) => (gameState, startPoint, endPoint) => {
                 const saveState = gameState?.saveState;
                 const cacheKey = [
                     fingerprintStartPoint(startPoint),
@@ -174,10 +182,9 @@ export const createSnapPerfController = (options = {}) => {
                 placementCache.set(saveState, cacheKey, result);
                 return result;
             });
-            didHook = true;
         }
 
-        return didHook || (hookedModule === snapModule && Boolean(snapModule));
+        return true;
     };
 
     const clearCache = () => {
@@ -189,15 +196,11 @@ export const createSnapPerfController = (options = {}) => {
     return { applyTuning, installHook, clearCache };
 };
 
-const modApi = getModApi();
-if (modApi) {
-    const controller = createSnapPerfController();
-    controller.applyTuning();
-    if (!controller.installHook()) {
-        if (modApi.game && typeof modApi.game.on === "function") {
-            modApi.game.on("ready", () => controller.installHook());
-        } else {
-            window.addEventListener("load", () => controller.installHook(), { once: true });
-        }
-    }
+/**
+ * @param {TrafficityModsApi} _mods
+ * @param {TrafficityGameFacade} game
+ */
+export default function setupSnapPerfFix(_mods, game) {
+    const controller = createSnapPerfController(game);
+    controller.installHook();
 }
