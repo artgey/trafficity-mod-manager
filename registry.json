@@ -67,11 +67,11 @@
   {
     "id": "maipulation-mod",
     "name": "Manipulation Mod",
-    "version": "1.5.3",
-    "modloaderVersion": "1.4.2",
+    "version": "1.5.4",
+    "modloaderVersion": "1.4.3",
     "author": "artgey",
     "description": "Alt+M: cheats, vehicle reset, simulation speed, quiet asphalt, safer lane use, traffic light phases, lane signs and facility-linked service access.",
-    "downloadUrl": "https://github.com/artgey/trafficity-mod-manager/releases/download/manipulation-mod-v1.5.3/manipulation-mod-v1.5.3.zip",
-    "sha256": "4158e738b1b24e508fce906b35540ae8ee63cfe25eb91db97d03e25d713117d7"
+    "downloadUrl": "https://github.com/artgey/trafficity-mod-manager/releases/download/manipulation-mod-v1.5.4/manipulation-mod-v1.5.4.zip",
+    "sha256": "f8f4cf29604d6460fb1dffc163a9e9d0a40e235995d8fd50b59aedf547a1360b"
   }
 ]
