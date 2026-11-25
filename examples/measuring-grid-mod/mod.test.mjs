@@ -18,9 +18,7 @@ test("measuring-grid uses road step presets (3u), snaps absolute points with Alt
     const savedConfigs = [];
     let currentCfg = { enabled: false, snapEnabled: false, presetIndex: 0 };
 
-    const snapModule = {
-        getNearestLaneCreationPoint: (_gs, x, y) => ({ type: "absolute", x, y }),
-    };
+    let getNearestPoint = (_gs, x, y) => ({ type: "absolute", x, y });
 
     globalThis.requestAnimationFrame = () => 1;
     globalThis.cancelAnimationFrame = () => {};
@@ -29,24 +27,31 @@ test("measuring-grid uses road step presets (3u), snaps absolute points with Alt
         getElementById: () => null,
     };
     globalThis.window = {
-        TrafficityMods: {
-            bindKey: (combo, handler) => bindings.set(combo, handler),
-            getConfig: () => currentCfg,
-            setConfig: (_id, cfg) => {
-                currentCfg = cfg;
-                savedConfigs.push(cfg);
-            },
-            game: {
-                getConstants: () => ({ laneWidth: 20, lanePointSpacing: 3 }),
-                getCameraState: () => ({ x: 0, y: 0, zoom: 1, width: 100, height: 100 }),
-                getSnapApi: () => ({ snapModule }),
-            },
-        },
         addEventListener() {},
     };
 
+    const mockGame = {
+        getConstants: () => ({ laneWidth: 20, lanePointSpacing: 3 }),
+        getCameraState: () => ({ x: 0, y: 0, zoom: 1, width: 100, height: 100 }),
+        hookRoadSnap: (factory) => {
+            getNearestPoint = factory(getNearestPoint);
+            return () => {};
+        },
+    };
+    const mockMods = {
+        bindKey: (combo, handler) => bindings.set(combo, handler),
+        getConfig: () => currentCfg,
+        setConfig: (_id, cfg) => {
+            currentCfg = cfg;
+            savedConfigs.push(cfg);
+        },
+        addOverlay: () => null,
+        game: mockGame,
+    };
+
     try {
-        const { computeGridLines, GRANULARITY_PRESETS } = await import(`./mod.js?t=${Date.now()}`);
+        const { default: setupMeasuringGrid, computeGridLines, GRANULARITY_PRESETS } = await import(`./mod.js?t=${Date.now()}`);
+        setupMeasuringGrid(mockMods, mockGame);
 
         assert.equal(bindings.has("Alt+g"), true);
         assert.equal(bindings.has("Alt+s"), true);
@@ -54,20 +59,24 @@ test("measuring-grid uses road step presets (3u), snaps absolute points with Alt
         assert.equal(bindings.has("BracketRight"), true);
 
         // Toggle ON (default presetIndex=0 -> 1x road step = 3u)
-        assert.equal(bindings.get("Alt+g")(), true);
+        bindings.get("Alt+g")();
         assert.equal(savedConfigs.at(-1).enabled, true);
         assert.equal(savedConfigs.at(-1).presetIndex, 0);
 
         // Step coarser ']' -> 2x step (6u), 5x step (15u), 1x lane (20u)
-        assert.equal(bindings.get("BracketRight")(), 1);
+        bindings.get("BracketRight")();
+        assert.equal(savedConfigs.at(-1).presetIndex, 1);
         assert.equal(GRANULARITY_PRESETS[1].mult, 2);
-        assert.equal(bindings.get("BracketRight")(), 2);
-        assert.equal(bindings.get("BracketRight")(), 3);
+        bindings.get("BracketRight")();
+        assert.equal(savedConfigs.at(-1).presetIndex, 2);
+        bindings.get("BracketRight")();
+        assert.equal(savedConfigs.at(-1).presetIndex, 3);
         assert.equal(GRANULARITY_PRESETS[3].kind, "lane");
 
         // Enable snapping (Alt+S) at 1x lane = 20u
-        assert.equal(bindings.get("Alt+s")(), true);
-        const snapped = snapModule.getNearestLaneCreationPoint({}, 27.4, 33.1);
+        bindings.get("Alt+s")();
+        assert.equal(savedConfigs.at(-1).snapEnabled, true);
+        const snapped = getNearestPoint({}, 27.4, 33.1);
         assert.equal(snapped.x, 20);
         assert.equal(snapped.y, 40);
 

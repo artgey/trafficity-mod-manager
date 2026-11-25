@@ -1,5 +1,3 @@
-const mods = typeof window !== "undefined" ? window.TrafficityMods : null;
-
 export const GRANULARITY_PRESETS = [
     { kind: "step", mult: 1, majorEvery: 5, label: "1× Step" },
     { kind: "step", mult: 2, majorEvery: 5, label: "2× Step" },
@@ -10,11 +8,18 @@ export const GRANULARITY_PRESETS = [
     { kind: "lane", mult: 8, majorEvery: 4, label: "8× Lane" },
 ];
 
+/**
+ * @param {number} value
+ * @param {number} stepWorld
+ */
 export const snapWorldCoord = (value, stepWorld) => {
     if (!stepWorld || stepWorld <= 0) return value;
     return Math.round(value / stepWorld) * stepWorld;
 };
 
+/**
+ * @param {{ camX: number, camY: number, zoom: number, width: number, height: number, stepWorld: number, majorEvery?: number }} params
+ */
 export const computeGridLines = ({ camX, camY, zoom, width, height, stepWorld, majorEvery = 4 }) => {
     if (!zoom || zoom <= 0 || !stepWorld || stepWorld <= 0 || width <= 0 || height <= 0) {
         return { vertical: [], horizontal: [], effectiveStepWorld: stepWorld };
@@ -51,6 +56,10 @@ export const computeGridLines = ({ camX, camY, zoom, width, height, stepWorld, m
     return { vertical, horizontal, effectiveStepWorld: effectiveStep };
 };
 
+/**
+ * @param {TrafficityGameFacade} game
+ * @param {{ getConfig: (id: string) => Record<string, unknown>, setConfig: (id: string, cfg: Record<string, unknown>) => Promise<void> | void, addOverlay?: TrafficityModsApi["addOverlay"] }} configApi
+ */
 export const createMeasuringGridController = (game, configApi) => {
     const saved = configApi.getConfig("measuring-grid") || {};
     let enabled = Boolean(saved.enabled);
@@ -60,10 +69,13 @@ export const createMeasuringGridController = (game, configApi) => {
             ? saved.presetIndex
             : 0; // Default: 1x road step (LANE_POINT_SPACING = 3)
 
+    /** @type {number | null} */
     let rafId = null;
+    /** @type {HTMLCanvasElement | null} */
     let canvas = null;
+    /** @type {HTMLElement | null} */
     let hud = null;
-    let hookedSnapModule = null;
+    let snapHookInstalled = false;
 
     const saveState = () => {
         configApi.setConfig("measuring-grid", { enabled, snapEnabled, presetIndex });
@@ -79,28 +91,22 @@ export const createMeasuringGridController = (game, configApi) => {
     };
 
     const installSnapHook = () => {
-        const mod = game.getSnapApi ? game.getSnapApi().snapModule : null;
-        if (!mod || hookedSnapModule === mod || typeof mod.getNearestLaneCreationPoint !== "function") {
-            return false;
+        if (snapHookInstalled || typeof game.hookRoadSnap !== "function") {
+            return snapHookInstalled;
         }
-        const prevFn = mod.getNearestLaneCreationPoint;
-        Object.defineProperty(mod, "getNearestLaneCreationPoint", {
-            configurable: true,
-            enumerable: true,
-            value: (gameState, x, y, roadDef, startPoint) => {
-                const res = prevFn(gameState, x, y, roadDef, startPoint);
-                if (!snapEnabled || !res || res.type !== "absolute") {
-                    return res;
-                }
-                const step = getStepWorld();
-                return {
-                    ...res,
-                    x: snapWorldCoord(res.x, step),
-                    y: snapWorldCoord(res.y, step),
-                };
-            },
+        snapHookInstalled = true;
+        game.hookRoadSnap((prevFn) => (gameState, x, y, roadDef, startPoint) => {
+            const res = prevFn(gameState, x, y, roadDef, startPoint);
+            if (!snapEnabled || !res || res.type !== "absolute" || typeof res.x !== "number" || typeof res.y !== "number") {
+                return res;
+            }
+            const step = getStepWorld();
+            return {
+                ...res,
+                x: snapWorldCoord(res.x, step),
+                y: snapWorldCoord(res.y, step),
+            };
         });
-        hookedSnapModule = mod;
         return true;
     };
 
@@ -244,6 +250,7 @@ export const createMeasuringGridController = (game, configApi) => {
         return snapEnabled;
     };
 
+    /** @param {number} delta */
     const stepPreset = (delta) => {
         const next = Math.max(0, Math.min(GRANULARITY_PRESETS.length - 1, presetIndex + delta));
         if (next !== presetIndex) {
@@ -256,23 +263,26 @@ export const createMeasuringGridController = (game, configApi) => {
 
     const mountHud = () => {
         if (hud || !document.body) return;
-        hud = document.createElement("div");
-        hud.id = "tmod-measuring-grid-hud";
-        hud.innerHTML = `
+        const container = document.createElement("div");
+        container.id = "tmod-measuring-grid-hud";
+        container.innerHTML = `
             <button id="tmod-grid-toggle" title="Toggle Measuring Grid (Alt+G)">Grid Off</button>
             <button id="tmod-grid-snap" title="Toggle Road Grid Snap (Alt+S)">Snap Off</button>
             <button id="tmod-grid-minus" title="Finer Grid ([)">-</button>
             <span id="tmod-grid-label">3u</span>
             <button id="tmod-grid-plus" title="Coarser Grid (])">+</button>
         `;
-        document.body.appendChild(hud);
-        for (const type of ["mousedown", "mouseup", "pointerdown", "pointerup", "click", "dblclick", "contextmenu", "wheel"]) {
-            hud.addEventListener(type, (e) => e.stopPropagation());
+        container.querySelector("#tmod-grid-toggle")?.addEventListener("click", toggle);
+        container.querySelector("#tmod-grid-snap")?.addEventListener("click", toggleSnap);
+        container.querySelector("#tmod-grid-minus")?.addEventListener("click", () => { stepPreset(-1); });
+        container.querySelector("#tmod-grid-plus")?.addEventListener("click", () => { stepPreset(1); });
+
+        if (typeof configApi.addOverlay === "function") {
+            configApi.addOverlay("measuring-grid", container);
+        } else {
+            document.body.appendChild(container);
         }
-        hud.querySelector("#tmod-grid-toggle").addEventListener("click", toggle);
-        hud.querySelector("#tmod-grid-snap").addEventListener("click", toggleSnap);
-        hud.querySelector("#tmod-grid-minus").addEventListener("click", () => stepPreset(-1));
-        hud.querySelector("#tmod-grid-plus").addEventListener("click", () => stepPreset(1));
+        hud = container;
         syncLoop();
     };
 
@@ -290,26 +300,26 @@ export const createMeasuringGridController = (game, configApi) => {
     };
 };
 
-if (mods && mods.game) {
-    const controller = createMeasuringGridController(mods.game, {
+/**
+ * @param {TrafficityModsApi} mods
+ * @param {TrafficityGameFacade} game
+ */
+export default function setupMeasuringGrid(mods, game) {
+    const controller = createMeasuringGridController(game, {
         getConfig: (id) => mods.getConfig(id),
         setConfig: (id, cfg) => mods.setConfig(id, cfg),
+        addOverlay: (id, content) => mods.addOverlay(id, content),
     });
 
-    if (!controller.installSnapHook()) {
-        if (typeof mods.game.on === "function") {
-            mods.game.on("ready", () => controller.installSnapHook());
-            mods.game.on("cursorModeChange", () => controller.installSnapHook());
-        } else {
-            window.addEventListener("load", () => controller.installSnapHook(), { once: true });
-        }
+    controller.installSnapHook();
+
+    if (typeof document !== "undefined") {
+        if (document.body) controller.mountHud();
+        else window.addEventListener("DOMContentLoaded", () => controller.mountHud(), { once: true });
     }
 
-    if (document.body) controller.mountHud();
-    else window.addEventListener("DOMContentLoaded", () => controller.mountHud(), { once: true });
-
-    mods.bindKey("Alt+g", () => controller.toggle());
-    mods.bindKey("Alt+s", () => controller.toggleSnap());
-    mods.bindKey("BracketLeft", () => controller.stepPreset(-1));
-    mods.bindKey("BracketRight", () => controller.stepPreset(1));
+    mods.bindKey("Alt+g", () => { controller.toggle(); });
+    mods.bindKey("Alt+s", () => { controller.toggleSnap(); });
+    mods.bindKey("BracketLeft", () => { controller.stepPreset(-1); });
+    mods.bindKey("BracketRight", () => { controller.stepPreset(1); });
 }
