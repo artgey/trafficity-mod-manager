@@ -2,6 +2,7 @@
 // Supports flat `key = value` pairs and `[settingKey]` tables with `value`, `type`,
 // `label`, `description`, `min`, `max`, and `options` metadata.
 
+/** @param {string} line */
 const stripInlineComment = (line) => {
     let inSingle = false;
     let inDouble = false;
@@ -27,6 +28,15 @@ const stripInlineComment = (line) => {
     return line;
 };
 
+/**
+ * @typedef {string | number | boolean | TomlValue[]} TomlValue
+ * @typedef {{ key: string, value: TomlValue, type: string, label: string, description: string, min?: number, max?: number, options?: TomlValue[] }} TomlSettingSchema
+ */
+
+/**
+ * @param {string} rawVal
+ * @returns {TomlValue}
+ */
 const parseTomlValue = (rawVal) => {
     const val = rawVal.trim();
     if (val === "true") return true;
@@ -73,6 +83,10 @@ const parseTomlValue = (rawVal) => {
     return val;
 };
 
+/**
+ * @param {unknown} val
+ * @returns {string}
+ */
 const formatTomlValue = (val) => {
     if (typeof val === "boolean") return val ? "true" : "false";
     if (typeof val === "number" && Number.isFinite(val)) return String(val);
@@ -81,9 +95,13 @@ const formatTomlValue = (val) => {
     return `"${str.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 };
 
+/** @param {string} rawText */
 const parseToml = (rawText) => {
+    /** @type {Record<string, TomlValue>} */
     const flat = {};
+    /** @type {Record<string, Record<string, TomlValue>>} */
     const sections = {};
+    /** @type {string | null} */
     let currentSection = null;
 
     for (const rawLine of String(rawText || "").split(/\r?\n/)) {
@@ -113,6 +131,11 @@ const parseToml = (rawText) => {
     return { flat, sections };
 };
 
+/**
+ * @param {unknown} val
+ * @param {string} [explicitType]
+ * @param {TomlValue[]} [options]
+ */
 const inferType = (val, explicitType, options) => {
     if (explicitType) return explicitType;
     if (Array.isArray(options) && options.length > 0) return "select";
@@ -121,8 +144,10 @@ const inferType = (val, explicitType, options) => {
     return "string";
 };
 
+/** @param {string} rawText */
 const extractSettingsSchema = (rawText) => {
     const { flat, sections } = parseToml(rawText);
+    /** @type {TomlSettingSchema[]} */
     const schema = [];
 
     for (const [key, value] of Object.entries(flat)) {
@@ -138,6 +163,7 @@ const extractSettingsSchema = (rawText) => {
     for (const [key, sec] of Object.entries(sections)) {
         const value = Object.prototype.hasOwnProperty.call(sec, "value") ? sec.value : sec.default ?? "";
         const options = Array.isArray(sec.options) ? sec.options : [];
+        /** @type {TomlSettingSchema} */
         const entry = {
             key,
             value,
@@ -154,7 +180,9 @@ const extractSettingsSchema = (rawText) => {
     return schema;
 };
 
+/** @param {string} rawText */
 const extractConfigValues = (rawText) => {
+    /** @type {Record<string, TomlValue>} */
     const out = {};
     for (const item of extractSettingsSchema(rawText)) {
         out[item.key] = item.value;
@@ -162,6 +190,10 @@ const extractConfigValues = (rawText) => {
     return out;
 };
 
+/**
+ * @param {string} rawText
+ * @param {Record<string, unknown>} updates
+ */
 const updateTomlValues = (rawText, updates) => {
     if (!updates || typeof updates !== "object") return String(rawText || "");
     const remaining = new Set(Object.keys(updates));

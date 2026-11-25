@@ -175,19 +175,47 @@ test("mod-api serves mod catalog, toggles state, and blocks path traversal", asy
             assert.equal(enabledJson.mods.length, 1);
             assert.equal(enabledJson.mods[0].id, "arrow-pan-mod");
 
-            // 4. Loader & mod file served with COOP/COEP headers
+            // 4. Loader & mod file served with COOP/COEP + Cache-Control: no-store headers
             const loaderRes = await fetch(`${baseUrl}/mods-runtime/loader.js`);
             assert.equal(loaderRes.status, 200);
             assert.equal(loaderRes.headers.get("cross-origin-embedder-policy"), "require-corp");
+            assert.equal(loaderRes.headers.get("cache-control"), "no-store");
 
             const modJsRes = await fetch(`${baseUrl}/mods-runtime/mods/arrow-pan-mod/mod.js`);
             assert.equal(modJsRes.status, 200);
+            assert.equal(modJsRes.headers.get("cache-control"), "no-store");
             assert.match(await modJsRes.text(), /mod loaded/);
+
+            // 4b. Expanded MIME types (.wasm)
+            await fsp.writeFile(path.join(modFolder, "helper.wasm"), Buffer.from([0x00, 0x61, 0x73, 0x6d]));
+            const wasmRes = await fetch(`${baseUrl}/mods-runtime/mods/arrow-pan-mod/helper.wasm`);
+            assert.equal(wasmRes.status, 200);
+            assert.equal(wasmRes.headers.get("content-type"), "application/wasm");
+
+            // 4c. Malformed JSON returns 400 JSON instead of unhandled exception
+            const badJsonRes = await fetch(`${baseUrl}/api/mods/toggle`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: "{bad json",
+            });
+            assert.equal(badJsonRes.status, 400);
+            const badJsonBody = await badJsonRes.json();
+            assert.match(badJsonBody.error, /Invalid JSON/i);
+
+            // 4d. Broken mod.json reports string `error` matching TrafficityCatalogMod
+            const brokenDir = path.join(modsDir, "broken-mod");
+            await fsp.mkdir(brokenDir, { recursive: true });
+            await fsp.writeFile(path.join(brokenDir, "mod.json"), "{not-json");
+            const brokenList = await (await fetch(`${baseUrl}/api/mods`)).json();
+            const brokenEntry = brokenList.mods.find((m) => m.id === "broken-mod");
+            assert.equal(typeof brokenEntry.error, "string");
+            assert.match(brokenEntry.error, /Invalid mod\.json/);
 
             // 5. Path traversal blocked
             const traversalRes = await fetch(`${baseUrl}/mods-runtime/mods/arrow-pan-mod/../../mods-config.json`);
             assert.equal(traversalRes.status, 404);
         } finally {
+            server.closeAllConnections?.();
             server.close();
         }
     } finally {
@@ -520,4 +548,265 @@ test("loader buildings.register wires CustomBuilding into Parcel definition/simu
     assert.equal(routerModules["2cbpn"].getSatisfactionWeightForBuildingType("mod:test-tower"), 25);
     assert.equal(api.game.MODULES.BUILDING_DEFINITIONS, "4nkf2");
     assert.equal(api.game.requireModule("BUILDING_DEFINITIONS"), routerModules["4nkf2"]);
+});
+
+test("loader composable hooks, stacked tooltips, getCursorState, bindKey/onMouse unsubscribe, and addOverlay host return", async () => {
+    const loaderSource = await fsp.readFile(path.resolve("runtime", "loader.js"), "utf-8");
+    const winListeners = new Map();
+    const fakeWindow = {
+        addEventListener(type, fn) {
+            if (!winListeners.has(type)) winListeners.set(type, new Set());
+            winListeners.get(type).add(fn);
+        },
+        removeEventListener(type, fn) {
+            winListeners.get(type)?.delete(fn);
+        },
+    };
+    const elementsById = new Map();
+    const fakeDoc = {
+        readyState: "complete",
+        head: { appendChild() {} },
+        body: {
+            appendChild(el) {
+                if (el.id) elementsById.set(el.id, el);
+            },
+        },
+        getElementById: (id) => elementsById.get(id) || null,
+        createElement: (tag) => ({
+            tagName: tag.toUpperCase(),
+            id: "",
+            style: {},
+            innerHTML: "",
+            addEventListener() {},
+            replaceChildren() {},
+            querySelector: () => ({ addEventListener() {}, style: {}, textContent: "" }),
+            querySelectorAll: () => [],
+        }),
+    };
+    class FakeXhr {
+        open() {}
+        send() {
+            this.status = 200;
+            this.responseText = JSON.stringify({ modsDir: "/tmp/mods", mods: [] });
+        }
+    }
+
+    const snapMod = {
+        getNearestLaneCreationPoint: (_gs, x, y) => ({ type: "absolute", x, y }),
+    };
+    const placementMod = {
+        getRoadConstructionActionWithPlacement: (_gs, s, e) => ({ calls: ["base"], s, e }),
+    };
+    const tooltipMod = {
+        BuildingTypeTooltip: (props) => ({ props: { children: [props.buildingDefinition.type] } }),
+    };
+    const jsxMod = {
+        jsx: (type, props, key) => ({ type, props, key }),
+    };
+    const routerModules = {
+        aYVZj: snapMod,
+        hkRbw: placementMod,
+        eAKuV: tooltipMod,
+        ayMG0: jsxMod,
+    };
+
+    const fn = new Function(
+        "window",
+        "document",
+        "globalThis",
+        "XMLHttpRequest",
+        "Node",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        loaderSource,
+    );
+    const fakeGlobal = {
+        __trafficityUndoModule: {},
+        __trafficityGameState: { cursorMode: { mode: "road placement", startPoint: null } },
+        __trafficityRouterRequire: (id) => routerModules[id] || null,
+        dispatchEvent: () => {},
+    };
+    fn(fakeWindow, fakeDoc, fakeGlobal, FakeXhr, function FakeNode() {}, () => 1, () => {});
+
+    const api = fakeWindow.TrafficityMods;
+    const { game } = api;
+
+    // 1. getCursorState
+    assert.deepEqual(game.getCursorState(), { mode: "road placement", startPoint: null });
+
+    // 2. Composable hookRoadSnap & hookRoadPlacement with 2 mods + unsubscribe
+    const unsubSnap1 = game.hookRoadSnap((orig) => (gs, x, y) => {
+        const res = orig(gs, x, y);
+        return { ...res, x: res.x + 10 };
+    });
+    const unsubSnap2 = game.hookRoadSnap((orig) => (gs, x, y) => {
+        const res = orig(gs, x, y);
+        return { ...res, y: res.y + 20 };
+    });
+    assert.deepEqual(snapMod.getNearestLaneCreationPoint({}, 1, 2), { type: "absolute", x: 11, y: 22 });
+    unsubSnap1();
+    assert.deepEqual(snapMod.getNearestLaneCreationPoint({}, 1, 2), { type: "absolute", x: 1, y: 22 });
+    unsubSnap2();
+    assert.deepEqual(snapMod.getNearestLaneCreationPoint({}, 1, 2), { type: "absolute", x: 1, y: 2 });
+
+    const unsubPlace1 = game.hookRoadPlacement((orig) => (gs, s, e) => {
+        const r = orig(gs, s, e);
+        return { ...r, calls: [...r.calls, "mod1"] };
+    });
+    const unsubPlace2 = game.hookRoadPlacement((orig) => (gs, s, e) => {
+        const r = orig(gs, s, e);
+        return { ...r, calls: [...r.calls, "mod2"] };
+    });
+    assert.deepEqual(placementMod.getRoadConstructionActionWithPlacement({}, "s", "e").calls, ["base", "mod1", "mod2"]);
+    unsubPlace1();
+    unsubPlace2();
+
+    // 3. Stacked addBuildingTooltipLine from two mods
+    game.addBuildingTooltipLine("eco-scrubber", "Line 1");
+    game.addBuildingTooltipLine("eco-scrubber", () => "Line 2");
+    await new Promise((r) => setTimeout(r, 0));
+    const rendered = tooltipMod.BuildingTypeTooltip({ buildingDefinition: { type: "eco-scrubber" } });
+    assert.equal(rendered.props.children.length, 3);
+    assert.equal(rendered.props.children[1].props.children, "Line 1");
+    assert.equal(rendered.props.children[2].props.children, "Line 2");
+
+    // 4. bindKey & onMouse return unsubscribe functions
+    let keyHits = 0;
+    const unbindKey = api.bindKey("Alt+k", () => { keyHits += 1; });
+    const keydownListener = [...winListeners.get("keydown")][0];
+    keydownListener({ type: "keydown", code: "KeyK", key: "k", altKey: true, ctrlKey: false, shiftKey: false, metaKey: false, preventDefault() {}, stopImmediatePropagation() {} });
+    assert.equal(keyHits, 1);
+    unbindKey();
+    keydownListener({ type: "keydown", code: "KeyK", key: "k", altKey: true, ctrlKey: false, shiftKey: false, metaKey: false, preventDefault() {}, stopImmediatePropagation() {} });
+    assert.equal(keyHits, 1);
+
+    let wheelHits = 0;
+    const unbindWheel = api.onMouse("wheel", () => { wheelHits += 1; });
+    assert.equal(winListeners.get("wheel").size, 1);
+    unbindWheel();
+    assert.equal(winListeners.get("wheel").size, 0);
+    assert.equal(wheelHits, 0);
+
+    // 5. addOverlay returns host element synchronously when document.body exists
+    const host = api.addOverlay("test-hud", "<span>Hi</span>");
+    assert.ok(host);
+    assert.equal(host.id, "tmod-overlay-test-hud");
+});
+
+test("dev-bridge HTTP endpoints and MCP server handle console logs and eval round-trip", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "tmod-devbridge-test-"));
+    const rootDir = path.join(tmp, "app");
+    const savesDir = path.join(tmp, "userData", "saves");
+    await fsp.mkdir(path.join(rootDir, "electron"), { recursive: true });
+    await fsp.mkdir(path.join(rootDir, "dist"), { recursive: true });
+    await fsp.writeFile(path.join(rootDir, "electron", "mod-loader.js"), "// loader\n");
+
+    const handler = createModRequestHandler({ rootDir, getPlayerSavesDir: async () => savesDir });
+    const server = http.createServer(async (req, res) => {
+        const url = new URL(req.url || "/", "http://127.0.0.1");
+        if (!(await handler(req, res, url))) {
+            res.statusCode = 404;
+            res.end("not found");
+        }
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    try {
+        // 1. Console push writes dev-bridge.json and populates ring buffer
+        const pushRes = await fetch(`${baseUrl}/api/dev/console/push`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                entries: [
+                    { ts: 1000, level: "info", text: "boot ok" },
+                    { ts: 1001, level: "error", text: "boom error" },
+                ],
+            }),
+        });
+        assert.equal(pushRes.status, 200);
+        const bridgeFile = path.join(tmp, "userData", "dev-bridge.json");
+        assert.equal(fs.existsSync(bridgeFile), true);
+        assert.equal(JSON.parse(await fsp.readFile(bridgeFile, "utf8")).url, baseUrl);
+
+        // 2. Query filtered logs
+        const errLogs = await (await fetch(`${baseUrl}/api/dev/console?level=error&q=boom`)).json();
+        assert.equal(errLogs.entries.length, 1);
+        assert.equal(errLogs.entries[0].text, "boom error");
+
+        // 3. Eval round-trip (external POST /api/dev/eval + renderer poll + result)
+        const evalPromise = fetch(`${baseUrl}/api/dev/eval`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: "1 + 2" }),
+        });
+        await new Promise((r) => setTimeout(r, 20));
+        const polled = await (await fetch(`${baseUrl}/api/dev/eval/poll`)).json();
+        assert.equal(polled.items.length, 1);
+        assert.equal(polled.items[0].code, "1 + 2");
+
+        await fetch(`${baseUrl}/api/dev/eval/result`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: polled.items[0].id, ok: true, result: 3 }),
+        });
+        const evalRes = await (await evalPromise).json();
+        assert.deepEqual(evalRes, { ok: true, result: 3 });
+
+        // 4. MCP handler initialize + tools/list
+        const { handleMcpRequest } = await import("../src/mcp-server.mjs");
+        const initRes = await handleMcpRequest({ jsonrpc: "2.0", id: 1, method: "initialize" });
+        assert.equal(initRes.result.serverInfo.name, "trafficity-dev-bridge");
+        const listRes = await handleMcpRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+        assert.deepEqual(
+            listRes.result.tools.map((t) => t.name),
+            ["get_console_logs", "eval_in_game"],
+        );
+    } finally {
+        server.closeAllConnections?.();
+        await new Promise((resolve) => server.close(resolve));
+        await fsp.rm(tmp, { recursive: true, force: true });
+    }
+});
+
+test("passive disk logger rotates sessions, writes crash snapshots, and readDiskLogs filters them", async () => {
+    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), "tmod-passive-log-"));
+    const modsDir = path.join(tmp, "mods");
+    const logsDir = path.join(modsDir, "logs");
+    const origEnv = process.env.TRAFFICITY_MODS_DIR;
+    process.env.TRAFFICITY_MODS_DIR = modsDir;
+
+    try {
+        await fsp.mkdir(logsDir, { recursive: true });
+        await fsp.writeFile(path.join(logsDir, "latest.log"), "previous session line\n", "utf8");
+        for (let i = 0; i < 11; i++) {
+            const p = path.join(logsDir, `session-2026-01-01T00-00-${String(i).padStart(2, "0")}.log`);
+            await fsp.writeFile(p, `old ${i}\n`, "utf8");
+        }
+
+        const { createSessionLogger } = await import("../src/mod-api.cjs");
+        const logger = createSessionLogger({ maxSessions: 10, maxBytes: 1024 * 1024 });
+        logger.appendSync(modsDir, { ts: Date.now(), level: "info", text: "boot ok" });
+        logger.appendSync(modsDir, { ts: Date.now(), level: "error", text: "[Uncaught Error] boom", crash: true });
+
+        const files = await fsp.readdir(logsDir);
+        assert.ok(files.includes("latest.log"));
+        const archives = files.filter((f) => /^(session|crash)-.+\.log$/i.test(f));
+        assert.ok(archives.length <= 10, `expected <= 10 archives, got ${archives.length}`);
+        assert.ok(archives.some((f) => f.startsWith("crash-")));
+
+        const { readDiskLogs } = await import("../src/dev-bridge-cli.mjs");
+        const latestRes = await readDiskLogs({ modsDir, level: "error" });
+        assert.ok(latestRes.lines.some((l) => l.includes("[Uncaught Error] boom")));
+        assert.ok(!latestRes.lines.some((l) => l.includes("boot ok")));
+
+        const crashRes = await readDiskLogs({ modsDir, crashes: true });
+        assert.ok(crashRes.lines.some((l) => l.includes("Trafficity Crash Snapshot")));
+        assert.ok(crashRes.lines.some((l) => l.includes("boot ok")));
+    } finally {
+        if (origEnv === undefined) delete process.env.TRAFFICITY_MODS_DIR;
+        else process.env.TRAFFICITY_MODS_DIR = origEnv;
+        await fsp.rm(tmp, { recursive: true, force: true });
+    }
 });

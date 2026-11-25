@@ -23,6 +23,7 @@ const CRC_TABLE = (() => {
     return table;
 })();
 
+/** @param {Buffer} buf */
 const crc32 = (buf) => {
     let crc = 0xffffffff;
     for (let i = 0; i < buf.length; i++) {
@@ -99,6 +100,7 @@ export const createZipBuffer = (entries) => {
     return Buffer.concat([...localParts, centralBuf, eocd]);
 };
 
+/** @param {unknown} raw */
 export const sanitizeModId = (raw) =>
     String(raw || "")
         .trim()
@@ -106,8 +108,22 @@ export const sanitizeModId = (raw) =>
         .replace(/[^a-z0-9._-]+/g, "-")
         .replace(/^-+|-+$/g, "");
 
+/**
+ * @param {{
+ *   id?: string,
+ *   name?: string,
+ *   author?: string,
+ *   description?: string,
+ *   targetDir?: string,
+ *   includeStyle?: boolean,
+ *   includeSettings?: boolean,
+ *   includeTypes?: boolean,
+ *   includeExample?: boolean,
+ *   includeTest?: boolean,
+ * }} [options]
+ */
 export const scaffoldMod = async ({
-    id,
+    id = "",
     name = "",
     author = "Trafficity Modder",
     description = "A custom Trafficity mod.",
@@ -116,6 +132,7 @@ export const scaffoldMod = async ({
     includeSettings = true,
     includeTypes = true,
     includeExample = true,
+    includeTest = true,
 } = {}) => {
     const cleanId = sanitizeModId(id);
     if (!cleanId) {
@@ -129,11 +146,12 @@ export const scaffoldMod = async ({
 
     const packageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
     const modloaderVersion = fs.existsSync(packageJsonPath)
-        ? JSON.parse(await fsp.readFile(packageJsonPath, "utf8")).version || "1.4.0"
-        : "1.4.0";
+        ? JSON.parse(await fsp.readFile(packageJsonPath, "utf8")).version || "1.4.2"
+        : "1.4.2";
 
     await fsp.mkdir(modDir, { recursive: true });
     const displayName = String(name || "").trim() || cleanId;
+    /** @type {{ id: string, name: string, version: string, modloaderVersion: string, author: string, description: string, entry: string, styles?: string[] }} */
     const manifest = {
         id: cleanId,
         name: displayName,
@@ -228,6 +246,49 @@ export const scaffoldMod = async ({
         createdFiles.push("types.d.ts");
     }
 
+    if (includeTest) {
+        const testSrc = [
+            `import assert from "node:assert/strict";`,
+            `import fs from "node:fs";`,
+            `import path from "node:path";`,
+            `import test from "node:test";`,
+            `import { fileURLToPath } from "node:url";`,
+            `import initializeMod from "./mod.js";`,
+            ``,
+            `const __dirname = path.dirname(fileURLToPath(import.meta.url));`,
+            ``,
+            `test("${cleanId} manifest and setup are valid", () => {`,
+            `    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "mod.json"), "utf8"));`,
+            `    assert.equal(manifest.id, "${cleanId}");`,
+            `    assert.equal(manifest.entry, "mod.js");`,
+            ``,
+            `    const overlays = new Map();`,
+            `    const bindings = new Map();`,
+            `    const mockGame = {`,
+            `        on: (_event, cb) => { cb(); return () => {}; },`,
+            `        playSfx: () => true,`,
+            `        getGameRelease: () => "test",`,
+            `    };`,
+            `    const mockMods = {`,
+            `        getConfig: (_id, defaults = {}) => ({ ...defaults }),`,
+            `        addOverlay: (id, html) => { overlays.set(id, html); return null; },`,
+            `        bindKey: (combo, fn) => { bindings.set(combo, fn); return () => {}; },`,
+            `        game: mockGame,`,
+            `    };`,
+            `    initializeMod(mockMods, mockGame);`,
+            ...(includeExample
+                ? [
+                      `    assert.ok(overlays.has("${cleanId}"));`,
+                      `    assert.ok(bindings.has("Alt+m"));`,
+                  ]
+                : []),
+            `});`,
+            ``,
+        ].join("\n");
+        await fsp.writeFile(path.join(modDir, "mod.test.mjs"), testSrc, "utf8");
+        createdFiles.push("mod.test.mjs");
+    }
+
     const codeHash = await computeModCodeHash(modDir);
     await fsp.writeFile(
         path.join(modDir, ".tmod-origin.json"),
@@ -238,6 +299,10 @@ export const scaffoldMod = async ({
     return { ok: true, id: cleanId, dir: modDir, files: createdFiles, manifest };
 };
 
+/**
+ * @param {string} srcDir
+ * @param {string} dstDir
+ */
 const copyDirForFork = async (srcDir, dstDir) => {
     for (const rel of await walkModFiles(srcDir, { excludeExts: [".zip"] })) {
         const dstPath = path.join(dstDir, rel);
@@ -246,8 +311,17 @@ const copyDirForFork = async (srcDir, dstDir) => {
     }
 };
 
+/**
+ * @param {{
+ *   sourceDir?: string,
+ *   newId?: string,
+ *   newName?: string,
+ *   newAuthor?: string,
+ *   targetDir?: string,
+ * }} [options]
+ */
 export const forkMod = async ({
-    sourceDir,
+    sourceDir = "",
     newId = "",
     newName = "",
     newAuthor = "Trafficity Modder",
@@ -349,11 +423,16 @@ export const forkMod = async ({
     return { ok: true, id: finalId, dir: destDir, forkedFrom: forkOrigin, lineage, manifest: nextManifest };
 };
 
+/** @param {string} rootDir */
 const collectModFiles = async (rootDir) => {
     const rels = await walkModFiles(rootDir, { excludeExts: [".test.mjs", ".zip"] });
     return Promise.all(rels.map(async (name) => ({ name, data: await fsp.readFile(path.join(rootDir, name)) })));
 };
 
+/**
+ * @param {string} modDir
+ * @param {string | null} [outZipPath]
+ */
 export const packModZip = async (modDir, outZipPath = null) => {
     const resolvedDir = path.resolve(modDir);
     const manifestPath = path.join(resolvedDir, "mod.json");
@@ -407,6 +486,7 @@ export const packModZip = async (modDir, outZipPath = null) => {
     };
 };
 
+/** @param {string} modDir */
 export const getModSettings = async (modDir) => {
     const settingsPath = path.join(path.resolve(modDir), "settings.toml");
     if (!fs.existsSync(settingsPath)) {
@@ -422,6 +502,10 @@ export const getModSettings = async (modDir) => {
     };
 };
 
+/**
+ * @param {string} modDir
+ * @param {Record<string, unknown>} values
+ */
 export const saveModSettings = async (modDir, values) => {
     const settingsPath = path.join(path.resolve(modDir), "settings.toml");
     if (!fs.existsSync(settingsPath)) {
@@ -438,10 +522,16 @@ export const saveModSettings = async (modDir, values) => {
     };
 };
 
+/** @param {string[]} argv */
 const parseFlags = (argv) => {
+    /** @type {Record<string, string | boolean | string[]> & { _: string[] }} */
     const flags = { _: [] };
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
+        if (arg === "-h") {
+            flags.help = true;
+            continue;
+        }
         if (!arg.startsWith("--")) {
             flags._.push(arg);
             continue;
@@ -458,22 +548,35 @@ const parseFlags = (argv) => {
     return flags;
 };
 
+const CLI_USAGE = [
+    "Usage: node src/mod-tools.mjs <command> [options]",
+    "  --scaffold <id> [--name <name>] [--author <author>] [--description <desc>] [--target-dir <dir>] [--no-style] [--no-settings] [--no-types] [--no-example] [--no-test]",
+    "  --fork <dir-or-id> [--id <new-id>] [--name <new-name>] [--author <author>] [--target-dir <dir>]",
+    "  --pack <mod-dir> [--out <zip-path>]",
+    "  --get-settings <mod-dir>",
+    "  --set-settings <mod-dir> --values '<json>'",
+    "  --help, -h",
+].join("\n");
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
     const flags = parseFlags(process.argv.slice(2));
     try {
-        if (flags.scaffold) {
-            const id = typeof flags.scaffold === "string" ? flags.scaffold : flags.id || flags._[0];
+        if (flags.help) {
+            console.log(CLI_USAGE);
+        } else if (flags.scaffold) {
+            const id = typeof flags.scaffold === "string" ? flags.scaffold : (typeof flags.id === "string" ? flags.id : flags._[0]);
             const res = await scaffoldMod({
                 id,
-                name: flags.name,
-                author: flags.author,
-                description: flags.description,
-                targetDir: flags["target-dir"] || resolveDefaultModsDir(),
+                name: typeof flags.name === "string" ? flags.name : undefined,
+                author: typeof flags.author === "string" ? flags.author : undefined,
+                description: typeof flags.description === "string" ? flags.description : undefined,
+                targetDir: typeof flags["target-dir"] === "string" ? flags["target-dir"] : resolveDefaultModsDir(),
                 includeStyle: flags["no-style"] ? false : true,
                 includeSettings: flags["no-settings"] ? false : true,
                 includeTypes: flags["no-types"] ? false : true,
                 includeExample: flags["no-example"] ? false : true,
+                includeTest: flags["no-test"] ? false : true,
             });
             console.log(JSON.stringify(res, null, 2));
         } else if (flags.fork) {
@@ -483,7 +586,7 @@ if (isMain) {
                 newId: typeof flags.id === "string" ? flags.id : "",
                 newName: typeof flags.name === "string" ? flags.name : "",
                 newAuthor: typeof flags.author === "string" ? flags.author : "Trafficity Modder",
-                targetDir: flags["target-dir"] || resolveDefaultModsDir(),
+                targetDir: typeof flags["target-dir"] === "string" ? flags["target-dir"] : resolveDefaultModsDir(),
             });
             console.log(JSON.stringify(res, null, 2));
         } else if (flags.pack) {
@@ -499,7 +602,7 @@ if (isMain) {
             const values = JSON.parse(String(flags.values || "{}"));
             console.log(JSON.stringify(await saveModSettings(modDir, values), null, 2));
         } else {
-            console.error("Usage: node src/mod-tools.mjs --scaffold <id> | --pack <mod-dir> | --get-settings <mod-dir> | --set-settings <mod-dir> --values '<json>'");
+            console.error(CLI_USAGE);
             process.exitCode = 1;
         }
     } catch (err) {

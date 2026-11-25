@@ -4,12 +4,149 @@
     }
 
     const SYNTHETIC_FLAG = "__trafficityModSynthetic";
+    /**
+     * @typedef {{
+     *   __trafficityRouterRequire?: (id: string) => unknown,
+     *   __trafficityPlayUiSfx?: (name: string) => void,
+     *   __trafficityUndoModule?: TrafficityUndoModule,
+     *   __trafficityUndoHistory?: TrafficityUndoHistoryModule,
+     *   __trafficityUndoDeps?: Record<string, unknown>,
+     *   __trafficityGameState?: TrafficityGameState,
+     *   __trafficitySnapModule?: TrafficitySnapModule,
+     *   __trafficityMaxSnapSearchSteps?: number,
+     *   __trafficitySnapSearchStride?: number,
+     *   __trafficitySuppressSnapLog?: boolean,
+     * }} TrafficityInternalGlobals
+     */
+    const g = /** @type {typeof globalThis & TrafficityInternalGlobals} */ (globalThis);
+    /** @type {Array<{ combo: string, spec: { ctrl: boolean, shift: boolean, alt: boolean, meta: boolean, code: string, rawKey: string }, handler: (event: KeyboardEvent) => boolean | void }>} */
     const keyBindings = [];
+    /** @type {Array<{ type: string, wrapped: EventListener, listenerOpts: boolean | AddEventListenerOptions }>} */
     const mouseBindings = [];
+    /** @type {Map<string, unknown>} */
     const services = new Map();
+    /** @type {{ modsDir: string, mods: TrafficityCatalogMod[], gameRelease?: string | null }} */
     let catalog = { modsDir: "", mods: [] };
+    /** @type {Map<string, string>} */
     let dependencyWarnings = new Map();
 
+    /**
+     * Installs always-on passive console & crash logging to `/api/dev/console/push` (`mods/logs/latest.log`).
+     */
+    const installPassiveLogger = () => {
+        if (typeof console === "undefined" || typeof fetch !== "function") return;
+        /** @param {unknown} value @param {WeakSet<object>} seen @param {number} depth @returns {string} */
+        const safeFormat = (value, seen = new WeakSet(), depth = 0) => {
+            if (value === null) return "null";
+            if (value === undefined) return "undefined";
+            if (typeof value === "string") return value;
+            if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
+            if (typeof value === "function") return `[Function ${value.name || "anonymous"}]`;
+            if (value instanceof Error) return value.stack || `${value.name}: ${value.message}`;
+            if (typeof value !== "object") return String(value);
+            if (seen.has(value)) return "[Circular]";
+            if (depth >= 2) return Array.isArray(value) ? `[Array(${value.length})]` : "[Object]";
+            seen.add(value);
+            if (ArrayBuffer.isView(value)) {
+                return `[${value.constructor?.name || "TypedArray"}(${/** @type {{ length?: number }} */ (value).length ?? value.byteLength})]`;
+            }
+            try {
+                if (Array.isArray(value)) {
+                    const items = value.slice(0, 12).map((item) => safeFormat(item, seen, depth + 1));
+                    if (value.length > 12) items.push(`...+${value.length - 12}`);
+                    return `[${items.join(", ")}]`;
+                }
+                const keys = Object.keys(value).slice(0, 16);
+                const pairs = keys.map((k) => `${k}: ${safeFormat(/** @type {Record<string, unknown>} */ (value)[k], seen, depth + 1)}`);
+                return `{${pairs.join(", ")}}`;
+            } catch {
+                return "[Unserializable]";
+            }
+        };
+
+        /** @type {Array<{ ts: number, level: string, text: string, crash?: boolean }>} */
+        const queue = [];
+        let flushing = false;
+        const flush = () => {
+            if (flushing || queue.length === 0) return;
+            flushing = true;
+            const batch = queue.splice(0, queue.length);
+            fetch("/api/dev/console/push", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ passive: true, entries: batch }),
+            })
+                .catch(() => {
+                    // ignore transient network errors
+                })
+                .finally(() => {
+                    flushing = false;
+                });
+        };
+
+        /**
+         * @param {string} level
+         * @param {unknown[]} args
+         * @param {boolean} [crash]
+         */
+        const enqueue = (level, args, crash = false) => {
+            const text = args.map((a) => safeFormat(a)).join(" ").slice(0, 8000);
+            queue.push({ ts: Date.now(), level, text, ...(crash ? { crash: true } : {}) });
+            if (queue.length > 400) queue.shift();
+            if (crash || level === "error" || level === "warn") {
+                flush();
+            }
+        };
+
+        /** @type {Array<"log" | "info" | "warn" | "error">} */
+        const levels = ["log", "info", "warn", "error"];
+        for (const level of levels) {
+            const orig = console[level];
+            if (typeof orig !== "function" || /** @type {{ __trafficityLogged?: boolean }} */ (orig).__trafficityLogged) {
+                continue;
+            }
+            const boundOrig = orig.bind(console);
+            /** @param {unknown[]} args */
+            const wrapped = (...args) => {
+                boundOrig(...args);
+                enqueue(level, args, false);
+            };
+            /** @type {{ __trafficityLogged?: boolean }} */ (wrapped).__trafficityLogged = true;
+            console[level] = wrapped;
+        }
+
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+            window.addEventListener("error", (ev) => {
+                const detail = ev.error instanceof Error
+                    ? (ev.error.stack || `${ev.error.name}: ${ev.error.message}`)
+                    : `${ev.message || "Error"} (${ev.filename || ""}:${ev.lineno || 0}:${ev.colno || 0})`;
+                enqueue("error", [`[Uncaught Error] ${detail}`], true);
+            });
+            window.addEventListener("unhandledrejection", (ev) => {
+                enqueue("error", ["[Unhandled Rejection]", ev.reason], true);
+            });
+            const beaconFlush = () => {
+                if (queue.length === 0 || typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") return;
+                const batch = queue.splice(0, queue.length);
+                navigator.sendBeacon(
+                    "/api/dev/console/push",
+                    new Blob([JSON.stringify({ passive: true, entries: batch })], { type: "application/json" }),
+                );
+            };
+            window.addEventListener("pagehide", beaconFlush);
+            window.addEventListener("beforeunload", beaconFlush);
+        }
+
+        if (typeof setInterval === "function") {
+            const timer = /** @type {number | { unref?: () => void }} */ (setInterval(flush, 500));
+            if (timer && typeof timer === "object" && typeof timer.unref === "function") {
+                timer.unref();
+            }
+        }
+    };
+    installPassiveLogger();
+
+    /** @param {string} code */
     const codeToKeyInfo = (code) => {
         if (/^Key([A-Z])$/.test(code)) {
             const ch = code.slice(3).toLowerCase();
@@ -19,6 +156,7 @@
             const d = code.slice(5);
             return { key: d, keyCode: d.charCodeAt(0) };
         }
+        /** @type {Record<string, { key: string, keyCode: number }>} */
         const table = {
             Space: { key: " ", keyCode: 32 },
             Enter: { key: "Enter", keyCode: 13 },
@@ -45,14 +183,17 @@
         return { key: code, keyCode: 0 };
     };
 
+    /** @param {EventTarget | null} target */
     const isEditableTarget = (target) => {
         if (!target || typeof target !== "object") {
             return false;
         }
-        const tag = (target.tagName || "").toUpperCase();
-        return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(target.isContentEditable);
+        const el = /** @type {{ tagName?: string, isContentEditable?: boolean }} */ (target);
+        const tag = (el.tagName || "").toUpperCase();
+        return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(el.isContentEditable);
     };
 
+    /** @param {string} combo */
     const parseCombo = (combo) => {
         const parts = String(combo)
             .split("+")
@@ -79,11 +220,15 @@
         return spec;
     };
 
+    /**
+     * @param {KeyboardEvent} event
+     * @param {{ ctrl: boolean, shift: boolean, alt: boolean, meta: boolean, code: string, rawKey: string }} spec
+     */
     const matchesCombo = (event, spec) => {
         const keyMatch =
             event.code === spec.code ||
             event.key === spec.code ||
-            (spec.rawKey && typeof event.key === "string" && event.key.toLowerCase() === spec.rawKey.toLowerCase());
+            (Boolean(spec.rawKey) && typeof event.key === "string" && event.key.toLowerCase() === spec.rawKey.toLowerCase());
         return (
             event.ctrlKey === spec.ctrl &&
             event.shiftKey === spec.shift &&
@@ -93,19 +238,28 @@
         );
     };
 
+    /**
+     * @param {string} toCode
+     * @param {{ key: string, keyCode: number } | null} [overrideKeyInfo]
+     * @param {{ ctrlKey?: boolean, shiftKey?: boolean, altKey?: boolean, metaKey?: boolean }} [modifiers]
+     */
     const dispatchSyntheticKey = (toCode, overrideKeyInfo, modifiers = {}) => {
         const info = overrideKeyInfo || codeToKeyInfo(toCode);
-        const cloned = new KeyboardEvent("keydown", {
-            key: info.key,
-            code: toCode,
-            ctrlKey: Boolean(modifiers.ctrlKey),
-            shiftKey: Boolean(modifiers.shiftKey),
-            altKey: Boolean(modifiers.altKey),
-            metaKey: Boolean(modifiers.metaKey),
-            repeat: false,
-            bubbles: true,
-            cancelable: true,
-        });
+        const cloned = /** @type {KeyboardEvent & Record<string, unknown>} */ (
+            /** @type {unknown} */ (
+                new KeyboardEvent("keydown", {
+                    key: info.key,
+                    code: toCode,
+                    ctrlKey: Boolean(modifiers.ctrlKey),
+                    shiftKey: Boolean(modifiers.shiftKey),
+                    altKey: Boolean(modifiers.altKey),
+                    metaKey: Boolean(modifiers.metaKey),
+                    repeat: false,
+                    bubbles: true,
+                    cancelable: true,
+                })
+            )
+        );
         if (info.keyCode) {
             try {
                 Object.defineProperty(cloned, "keyCode", { get: () => info.keyCode });
@@ -118,8 +272,9 @@
         window.dispatchEvent(cloned);
     };
 
+    /** @param {KeyboardEvent} event */
     const onKeyEvent = (event) => {
-        if (event[SYNTHETIC_FLAG]) {
+        if (/** @type {KeyboardEvent & Record<string, unknown>} */ (/** @type {unknown} */ (event))[SYNTHETIC_FLAG]) {
             return;
         }
 
@@ -131,7 +286,7 @@
         }
 
         if (!isEditableTarget(event.target) && event.type === "keydown") {
-            for (const binding of keyBindings) {
+            for (const binding of [...keyBindings]) {
                 if (matchesCombo(event, binding.spec)) {
                     const result = binding.handler(event);
                     if (result !== false) {
@@ -146,15 +301,19 @@
 
     window.addEventListener("keydown", onKeyEvent, true);
 
+    /** @param {Element | null} el */
     const resolveClickable = (el) => {
         if (!el) return null;
-        if (el.tagName === "BUTTON") return el;
-        return (typeof el.querySelector === "function" && el.querySelector("button.game-multi-button-option, button")) || el;
+        if (el.tagName === "BUTTON") return /** @type {HTMLButtonElement} */ (el);
+        return /** @type {HTMLElement | null} */ (
+            (typeof el.querySelector === "function" && el.querySelector("button.game-multi-button-option, button")) || el
+        );
     };
 
     const getToolbeltSlots = () => {
         const row = document.querySelector(".road-toolbar-buttons-row");
-        if (!row || !row.children) return [];
+        if (!row || !row.children) return /** @type {HTMLButtonElement[]} */ ([]);
+        /** @type {HTMLButtonElement[]} */
         const buttons = [];
         for (const child of row.children) {
             if (
@@ -165,24 +324,97 @@
                 continue;
             }
             if (child.tagName === "BUTTON") {
-                buttons.push(child);
+                buttons.push(/** @type {HTMLButtonElement} */ (child));
             } else if (typeof child.querySelectorAll === "function") {
                 for (const btn of child.querySelectorAll("button.game-multi-button-option")) {
-                    buttons.push(btn);
+                    buttons.push(/** @type {HTMLButtonElement} */ (btn));
                 }
             }
         }
         return buttons;
     };
 
+    /** @type {Map<string, { radius: number, color?: number, alpha?: number }>} */
     const selectionRadiusRings = new Map();
+    /** @type {Map<string, Array<{ textOrProvider: string | ((def: TrafficityBuildingDefinition) => string), style?: Record<string, string> }>>} */
     const buildingTooltipLines = new Map();
+    /** @type {Set<(context: { building: TrafficityBuildingRecord, buildingDefinition: TrafficityBuildingDefinition | null, saveState: TrafficitySaveState, gameState: TrafficityGameState }) => string | TrafficityBuildingViewPanelSection | Array<string | TrafficityBuildingViewPanelSection> | null | undefined>} */
+    const buildingViewPanelProviders = new Set();
+    /** @type {Set<(pollutionGrid: TrafficityPollutionGrid, context: { saveState: TrafficitySaveState, cellSize: number, getBuildingDefinition: (type: string) => TrafficityBuildingDefinition | null }) => void>} */
     const pollutionDiffusionHandlers = new Set();
-    const hookedRoundaboutModules = new WeakSet();
-    const hookedRoadPlacementModules = new WeakSet();
     let selectionRadiusHooked = false;
     let tooltipHooked = false;
+    let buildingViewPanelHooked = false;
     let pollutionDiffusionHooked = false;
+
+    /**
+     * Creates a composable multi-mod export hook manager so multiple mods can
+     * wrap the same Parcel export without clobbering each other and unsubscribe cleanly.
+     * @template {(...args: never[]) => unknown} TFn
+     * @param {() => Record<string, unknown> | null} resolveModule
+     * @param {string} exportName
+     * @returns {(wrapperFactory: (orig: TFn) => TFn) => () => void}
+     */
+    const createComposableExportHook = (resolveModule, exportName) => {
+        /** @type {Array<(orig: TFn) => TFn>} */
+        const factories = [];
+        /** @type {Record<string, unknown> | null} */
+        let hookedMod = null;
+        /** @type {TFn | null} */
+        let baseFn = null;
+        /** @type {TFn | null} */
+        let composedFn = null;
+
+        const rebuildChain = () => {
+            if (!baseFn) return;
+            let fn = baseFn;
+            for (const factory of factories) {
+                const next = factory(fn);
+                if (typeof next === "function") {
+                    fn = next;
+                }
+            }
+            composedFn = fn;
+        };
+
+        const ensureAttached = () => {
+            const mod = resolveModule();
+            if (!mod) return;
+            if (hookedMod !== mod) {
+                let orig;
+                try {
+                    orig = mod[exportName];
+                } catch {
+                    return;
+                }
+                if (typeof orig !== "function") return;
+                hookedMod = mod;
+                baseFn = /** @type {TFn} */ (orig);
+                rebuildChain();
+                overrideExport(mod, exportName, (/** @type {never[]} */ ...args) => {
+                    const target = composedFn || baseFn;
+                    return target ? target(...args) : undefined;
+                });
+            } else {
+                rebuildChain();
+            }
+        };
+
+        /** @param {(orig: TFn) => TFn} wrapperFactory */
+        return (wrapperFactory) => {
+            if (typeof wrapperFactory !== "function") return () => {};
+            factories.push(wrapperFactory);
+            ensureAttached();
+            game.on("ready", ensureAttached);
+            return () => {
+                const idx = factories.indexOf(wrapperFactory);
+                if (idx !== -1) {
+                    factories.splice(idx, 1);
+                    rebuildChain();
+                }
+            };
+        };
+    };
 
     const ensureSelectionRadiusHook = () => {
         if (selectionRadiusHooked) return;
@@ -190,8 +422,8 @@
         if (!ringMod || typeof ringMod.setBuildingPollutionRadiusSelectionGraphic !== "function") return;
         selectionRadiusHooked = true;
         const origSetRing = ringMod.setBuildingPollutionRadiusSelectionGraphic;
-        overrideExport(ringMod, "setBuildingPollutionRadiusSelectionGraphic", (gameState, buildingId) => {
-            const building = gameState?.saveState?.buildings?.[buildingId];
+        overrideExport(ringMod, "setBuildingPollutionRadiusSelectionGraphic", (/** @type {TrafficityGameState} */ gameState, /** @type {number} */ buildingId) => {
+            const building = gameState?.saveState?.buildings?.[String(buildingId)];
             const cfg = building ? selectionRadiusRings.get(building.type) : null;
             if (cfg && typeof gameState?.setWorldSelectionGraphic === "function") {
                 const graphic = game.createDashedCircle(
@@ -220,22 +452,131 @@
         if (!tooltipMod || typeof tooltipMod.BuildingTypeTooltip !== "function" || !jsxMod?.jsx) return;
         tooltipHooked = true;
         const origTooltip = tooltipMod.BuildingTypeTooltip;
-        overrideExport(tooltipMod, "BuildingTypeTooltip", (props) => {
-            const el = origTooltip(props);
+        overrideExport(tooltipMod, "BuildingTypeTooltip", (/** @type {{ buildingDefinition: TrafficityBuildingDefinition }} */ props) => {
+            const el = /** @type {{ props?: { children?: unknown } } | null} */ (origTooltip(props));
             const bType = props?.buildingDefinition?.type;
-            const entry = bType ? buildingTooltipLines.get(bType) : null;
-            if (!entry || !el?.props) return el;
-            const text = typeof entry.textOrProvider === "function"
-                ? entry.textOrProvider(props.buildingDefinition)
-                : entry.textOrProvider;
-            if (!text) return el;
-            const descLine = jsxMod.jsx("div", {
-                className: "building-type-tooltip-line",
-                style: entry.style ?? { maxWidth: "220px", whiteSpace: "normal", lineHeight: "1.3", opacity: "0.85" },
-                children: text,
-            }, `tmod-tip-${bType}`);
+            const entries = bType ? buildingTooltipLines.get(bType) : null;
+            if (!entries || entries.length === 0 || !el?.props) return el;
+            const extraLines = [];
+            for (let i = 0; i < entries.length; i++) {
+                const entry = entries[i];
+                const text = typeof entry.textOrProvider === "function"
+                    ? entry.textOrProvider(props.buildingDefinition)
+                    : entry.textOrProvider;
+                if (!text) continue;
+                extraLines.push(
+                    jsxMod.jsx("div", {
+                        className: "building-type-tooltip-line",
+                        style: entry.style ?? { maxWidth: "220px", whiteSpace: "normal", lineHeight: "1.3", opacity: "0.85" },
+                        children: text,
+                    }, `tmod-tip-${bType}-${i}`),
+                );
+            }
+            if (extraLines.length === 0) return el;
             const prevChildren = Array.isArray(el.props.children) ? el.props.children : [el.props.children];
-            return { ...el, props: { ...el.props, children: [...prevChildren, descLine] } };
+            return { ...el, props: { ...el.props, children: [...prevChildren, ...extraLines] } };
+        });
+    };
+
+    const ensureBuildingViewPanelHook = () => {
+        if (buildingViewPanelHooked) return;
+        const panelMod = game.requireModule("BUILDING_VIEW_PANEL_UI");
+        const jsxMod = game.requireModule("REACT_JSX");
+        if (!panelMod || typeof panelMod.BuildingViewPanel !== "function" || !jsxMod?.jsx) return;
+        buildingViewPanelHooked = true;
+        const origPanel = panelMod.BuildingViewPanel;
+        overrideExport(panelMod, "BuildingViewPanel", (/** @type {{ gameState: TrafficityGameState }} */ props) => {
+            const el = /** @type {{ props?: { children?: unknown } } | null} */ (origPanel(props));
+            if (!el?.props || buildingViewPanelProviders.size === 0) return el;
+            const gameState = props?.gameState;
+            const saveState = gameState?.saveState;
+            const rawId = gameState?.uiMode?.mode === "building viewing"
+                ? gameState.uiMode.buildingId
+                : gameState?.worldSelection?.buildingId;
+            const building = rawId !== undefined && rawId !== null ? saveState?.buildings?.[String(rawId)] : null;
+            if (!building || !saveState) return el;
+
+            const buildingDefinition = game.getBuildingDefinition(building.type);
+            /** @type {TrafficityBuildingViewPanelSection[]} */
+            const sections = [];
+            for (const provider of buildingViewPanelProviders) {
+                try {
+                    const out = provider({ building, buildingDefinition, saveState, gameState });
+                    if (!out) continue;
+                    const items = Array.isArray(out) ? out : [out];
+                    for (const item of items) {
+                        if (typeof item === "string" && item) sections.push({ text: item });
+                        else if (
+                            item &&
+                            typeof item === "object" &&
+                            ((typeof item.text === "string" && item.text) || (Array.isArray(item.rows) && item.rows.length > 0))
+                        ) {
+                            sections.push(item);
+                        }
+                    }
+                } catch (err) {
+                    console.error("[TrafficityMods] Error in addBuildingViewPanelSection provider:", err);
+                }
+            }
+            if (sections.length === 0) return el;
+
+            const rootChildren = Array.isArray(el.props.children) ? [...el.props.children] : [el.props.children];
+            const leftCol = /** @type {{ props?: { className?: string, children?: unknown } } | null} */ (rootChildren[0]);
+            if (!leftCol?.props || leftCol.props.className !== "building-view-left") return el;
+            const leftChildren = Array.isArray(leftCol.props.children) ? leftCol.props.children : [leftCol.props.children];
+            const extraEls = sections.map((sec, i) => {
+                if (Array.isArray(sec.rows) && sec.rows.length > 0) {
+                    const children = [];
+                    if (sec.title) {
+                        children.push(
+                            jsxMod.jsx("div", {
+                                style: { fontWeight: "700", fontSize: "11px", letterSpacing: "0.04em", textTransform: "uppercase", opacity: "0.8", marginBottom: "4px" },
+                                children: sec.title,
+                            }, "title"),
+                        );
+                    }
+                    for (let rIdx = 0; rIdx < sec.rows.length; rIdx++) {
+                        const row = sec.rows[rIdx];
+                        const barWidth = typeof row.progress === "number" ? `${Math.max(0, Math.min(1, row.progress)) * 100}%` : null;
+                        const rowColor = row.color || "#38bdf8";
+                        children.push(
+                            jsxMod.jsx("div", {
+                                style: { display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", lineHeight: "1.35", marginTop: "2px", fontVariantNumeric: "tabular-nums" },
+                                children: [
+                                    jsxMod.jsx("span", { style: { flex: "1 1 auto", opacity: "0.88", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: row.label }, "lbl"),
+                                    barWidth !== null
+                                        ? jsxMod.jsx("span", {
+                                              style: { width: "44px", height: "5px", borderRadius: "999px", background: "rgba(255,255,255,0.12)", overflow: "hidden", flexShrink: "0" },
+                                              children: jsxMod.jsx("span", {
+                                                  style: { display: "block", width: barWidth, height: "100%", background: rowColor },
+                                              }, "fill"),
+                                          }, "bar")
+                                        : null,
+                                    jsxMod.jsx("span", { style: { fontWeight: "700", color: rowColor, minWidth: "40px", textAlign: "right" }, children: row.value }, "val"),
+                                    row.target ? jsxMod.jsx("span", { style: { opacity: "0.68", fontSize: "10px", minWidth: "46px", textAlign: "right" }, children: row.target }, "tgt") : null,
+                                    row.delta ? jsxMod.jsx("span", { style: { opacity: "0.85", fontSize: "10px", minWidth: "42px", textAlign: "right", color: rowColor }, children: row.delta }, "dlt") : null,
+                                ],
+                            }, `row-${rIdx}`),
+                        );
+                    }
+                    return jsxMod.jsx("div", {
+                        className: "building-view-panel-mod-section",
+                        style: sec.style ?? { marginTop: "8px", paddingTop: "6px", borderTop: "1px solid rgba(255,255,255,0.12)" },
+                        children,
+                    }, `tmod-bvp-${building.id}-${i}`);
+                }
+                return jsxMod.jsx("div", {
+                    className: "building-view-panel-mod-line",
+                    style: sec.style ?? { marginTop: "6px", fontSize: "12px", lineHeight: "1.3", opacity: "0.9" },
+                    children: sec.text,
+                }, `tmod-bvp-${building.id}-${i}`);
+            });
+            rootChildren[0] = { ...leftCol, props: { ...leftCol.props, children: [...leftChildren, ...extraEls] } };
+            const prevStyle = /** @type {Record<string, unknown> | undefined} */ (/** @type {{ style?: unknown }} */ (el.props).style);
+            const nextStyle = prevStyle && typeof prevStyle.height === "number"
+                ? { ...prevStyle, minHeight: prevStyle.height, height: "auto" }
+                : prevStyle;
+            return { ...el, props: { ...el.props, ...(nextStyle ? { style: nextStyle } : {}), children: rootChildren } };
         });
     };
 
@@ -245,9 +586,10 @@
         if (!difMod || typeof difMod.updatePollutionDiffusion !== "function") return;
         pollutionDiffusionHooked = true;
         const origDiffuse = difMod.updatePollutionDiffusion;
-        overrideExport(difMod, "updatePollutionDiffusion", (pollutionGrid) => {
+        overrideExport(difMod, "updatePollutionDiffusion", (/** @type {TrafficityPollutionGrid} */ pollutionGrid) => {
             origDiffuse(pollutionGrid);
-            const saveState = globalThis.__trafficityGameState?.saveState;
+            const saveState = g.__trafficityGameState?.saveState;
+            if (!saveState || pollutionGrid !== saveState.pollutionGrid) return;
             const { cellSize } = game.getPollutionConfig();
             for (const handler of pollutionDiffusionHandlers) {
                 handler(pollutionGrid, {
@@ -259,7 +601,7 @@
         });
     };
 
-    /** Official map of human-readable module names to Trafficity Parcel module IDs. */
+    /** Official map of human-readable module names to Trafficity Parcel module IDs (main thread). */
     const ROUTER_MODULES = Object.freeze({
         // Buildings
         BUILDING_DEFINITIONS: "4nkf2",
@@ -273,6 +615,7 @@
         BUILDING_PREVIEW_UI: "iPOHp",
         BUILDING_TOOLTIP_UI: "eAKuV",
         BUILDING_VIEW_PANEL_UI: "aelWA",
+        BUILDING_HAPPINESS: "5JbRC",
         // Roads & Snapping
         ROAD_CONSTANTS: "bTgKI",
         ROAD_SNAP: "aYVZj",
@@ -284,6 +627,7 @@
         POLLUTION_GRID: "d9GJQ",
         POLLUTION_DIFFUSION: "gs8fX",
         POLLUTION_RADIUS_UI: "eqevD",
+        POLLUTION_OVERLAY_CONFIG: "7VBKL",
         LEVEL_PROGRESSION: "aigC5",
         SCENARIOS: "a3oY4",
         DIFFICULTY_MODES: "9colC",
@@ -301,19 +645,42 @@
         REACT_JSX: "ayMG0",
     });
 
+    /** Official map of Trafficity Parcel module IDs inside simulation Web Workers. */
+    const WORKER_MODULES = Object.freeze({
+        BOOT: "fHJ87",
+        BUILDING_DEFINITIONS: "aS4Aq",
+        BUILDING_VISITED_NEEDS: "6hect",
+        BUILDING_VEHICLE_SPECS: "3baQI",
+    });
+
+    const hookRoadSnapImpl = createComposableExportHook(
+        () => g.__trafficitySnapModule || game.requireModule("ROAD_SNAP"),
+        "getNearestLaneCreationPoint",
+    );
+    const hookRoundaboutPlacementImpl = createComposableExportHook(
+        () => game.requireModule("ROUNDABOUT_PLACEMENT"),
+        "getPlaceRoundaboutResultForSize",
+    );
+    const hookRoadPlacementImpl = createComposableExportHook(
+        () => game.requireModule("ROAD_PLACEMENT"),
+        "getRoadConstructionActionWithPlacement",
+    );
+
+    /** @type {TrafficityGameFacade} */
     const game = {
         MODULES: ROUTER_MODULES,
-        requireRouterModule: (id) => {
+        on: /** @type {TrafficityGameFacade["on"]} */ (() => () => {}),
+        requireRouterModule: /** @type {TrafficityGameFacade["requireRouterModule"]} */ ((/** @type {string} */ id) => {
             try {
-                return typeof globalThis.__trafficityRouterRequire === "function"
-                    ? globalThis.__trafficityRouterRequire(id)
+                return typeof g.__trafficityRouterRequire === "function"
+                    ? g.__trafficityRouterRequire(id)
                     : null;
             } catch {
                 return null;
             }
-        },
-        requireModule: (nameOrId) => {
-            const resolved = ROUTER_MODULES[nameOrId] || nameOrId;
+        }),
+        requireModule: (/** @type {string} */ nameOrId) => {
+            const resolved = /** @type {Record<string, string>} */ (ROUTER_MODULES)[nameOrId] || nameOrId;
             return game.requireRouterModule(resolved);
         },
         pressButton: (target) => {
@@ -342,6 +709,7 @@
         cycleToolbeltSlot: (delta) => {
             const slots = getToolbeltSlots();
             if (slots.length === 0) return false;
+            /** @param {HTMLButtonElement | null | undefined} btn */
             const isSlotAvailable = (btn) => {
                 if (!btn || btn.disabled) return false;
                 const host = typeof btn.closest === "function" ? btn.closest(".game-multi-button") : null;
@@ -368,11 +736,15 @@
             return false;
         },
         getCursorMode: () => {
-            const gs = globalThis.__trafficityGameState;
+            const gs = g.__trafficityGameState;
             return gs && gs.cursorMode ? gs.cursorMode.mode : null;
         },
+        getCursorState: () => {
+            const gs = g.__trafficityGameState;
+            return gs && gs.cursorMode ? gs.cursorMode : null;
+        },
         isIdle: () => {
-            const gs = globalThis.__trafficityGameState;
+            const gs = g.__trafficityGameState;
             if (gs && gs.cursorMode) {
                 return gs.cursorMode.mode === "default";
             }
@@ -380,23 +752,31 @@
         },
         sendSyntheticMouse: (type, init = {}) => {
             const target = document.querySelector("#pixi canvas") || document.body || window;
-            const ev = new MouseEvent(type, {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                ...init,
-            });
+            const ev = /** @type {MouseEvent & Record<string, unknown>} */ (
+                /** @type {unknown} */ (
+                    new MouseEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        ...init,
+                    })
+                )
+            );
             ev[SYNTHETIC_FLAG] = true;
             target.dispatchEvent(ev);
         },
         sendSyntheticWheel: (init = {}) => {
             const target = document.querySelector("#pixi canvas") || document.body || window;
-            const ev = new WheelEvent("wheel", {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                ...init,
-            });
+            const ev = /** @type {WheelEvent & Record<string, unknown>} */ (
+                /** @type {unknown} */ (
+                    new WheelEvent("wheel", {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        ...init,
+                    })
+                )
+            );
             ev[SYNTHETIC_FLAG] = true;
             target.dispatchEvent(ev);
         },
@@ -435,7 +815,9 @@
         },
         addSlotBadge: (slotBtn, label) => {
             if (!slotBtn) return;
-            const host = (typeof slotBtn.closest === "function" && slotBtn.closest(".game-multi-button")) || slotBtn;
+            const host = /** @type {HTMLElement} */ (
+                (typeof slotBtn.closest === "function" && slotBtn.closest(".game-multi-button")) || slotBtn
+            );
             if (typeof getComputedStyle === "function" && getComputedStyle(host).position === "static") {
                 host.style.position = "relative";
             }
@@ -450,7 +832,7 @@
             }
         },
         addButtonHint: (target, label) => {
-            const el = document.querySelector(`[data-tutorial-target="${target}"]`);
+            const el = /** @type {HTMLElement | null} */ (document.querySelector(`[data-tutorial-target="${target}"]`));
             if (!el) return;
             if (typeof getComputedStyle === "function" && getComputedStyle(el).position === "static") {
                 el.style.position = "relative";
@@ -466,8 +848,8 @@
             }
         },
         playSfx: (name) => {
-            if (typeof globalThis.__trafficityPlayUiSfx === "function") {
-                globalThis.__trafficityPlayUiSfx(name);
+            if (typeof g.__trafficityPlayUiSfx === "function") {
+                g.__trafficityPlayUiSfx(name);
                 return true;
             }
             const sfxMod = game.requireModule("UI_SFX");
@@ -493,26 +875,26 @@
             dispatchSyntheticKey("Escape", { key: "Escape", keyCode: 27 });
         },
         getUndoApi: () => ({
-            undoModule: globalThis.__trafficityUndoModule || null,
-            undoHistory: globalThis.__trafficityUndoHistory || null,
-            gameState: globalThis.__trafficityGameState || null,
-            undoDeps: globalThis.__trafficityUndoDeps || null,
+            undoModule: g.__trafficityUndoModule || null,
+            undoHistory: g.__trafficityUndoHistory || null,
+            gameState: g.__trafficityGameState || null,
+            undoDeps: g.__trafficityUndoDeps || null,
         }),
         getSnapApi: () => ({
-            snapModule: globalThis.__trafficitySnapModule || game.requireModule("ROAD_SNAP") || null,
+            snapModule: g.__trafficitySnapModule || game.requireModule("ROAD_SNAP") || null,
         }),
         configureSnapSearch: ({ maxSteps, stride, suppressLog } = {}) => {
-            if (typeof maxSteps === "number") globalThis.__trafficityMaxSnapSearchSteps = maxSteps;
-            if (typeof stride === "number") globalThis.__trafficitySnapSearchStride = stride;
-            if (typeof suppressLog === "boolean") globalThis.__trafficitySuppressSnapLog = suppressLog;
+            if (typeof maxSteps === "number") g.__trafficityMaxSnapSearchSteps = maxSteps;
+            if (typeof stride === "number") g.__trafficitySnapSearchStride = stride;
+            if (typeof suppressLog === "boolean") g.__trafficitySuppressSnapLog = suppressLog;
             return {
-                maxSteps: globalThis.__trafficityMaxSnapSearchSteps ?? 30,
-                stride: globalThis.__trafficitySnapSearchStride ?? 1,
-                suppressLog: Boolean(globalThis.__trafficitySuppressSnapLog),
+                maxSteps: g.__trafficityMaxSnapSearchSteps ?? 30,
+                stride: g.__trafficitySnapSearchStride ?? 1,
+                suppressLog: Boolean(g.__trafficitySuppressSnapLog),
             };
         },
         getCameraState: () => {
-            const gameState = globalThis.__trafficityGameState;
+            const gameState = g.__trafficityGameState;
             if (!gameState || !gameState.mapContainer || !gameState.saveState) return null;
             return {
                 x: gameState.mapContainer.position.x,
@@ -549,7 +931,7 @@
             };
         },
         getZoomAwareStrokeWidth: (zoom) => {
-            const z = typeof zoom === "number" ? zoom : (globalThis.__trafficityGameState?.saveState?.cameraZoom ?? 1);
+            const z = typeof zoom === "number" ? zoom : (g.__trafficityGameState?.saveState?.cameraZoom ?? 1);
             const camMod = game.requireModule("CAMERA");
             return camMod && typeof camMod.getZoomAwareStrokeWidth === "function"
                 ? camMod.getZoomAwareStrokeWidth(z)
@@ -558,7 +940,7 @@
         createDashedCircle: (cx, cy, radius, options = {}) => {
             const gfxMod = game.requireModule("PIXI_GRAPHICS");
             if (!gfxMod?.Graphics) return null;
-            const g = new gfxMod.Graphics();
+            const gObj = new gfxMod.Graphics();
             const dashLen = options.dashLength ?? 28;
             const gapLen = options.gapLength ?? 18;
             const circumference = 2 * Math.PI * radius;
@@ -574,16 +956,16 @@
                         const a = a0 + (i / steps) * (a1 - a0);
                         const x = cx + Math.cos(a) * radius;
                         const y = cy + Math.sin(a) * radius;
-                        if (i === 0) g.moveTo(x, y);
-                        else g.lineTo(x, y);
+                        if (i === 0) gObj.moveTo(x, y);
+                        else gObj.lineTo(x, y);
                     }
                 }
                 dist = next;
                 draw = !draw;
             }
             const strokeWidth = options.strokeWidth ?? game.getZoomAwareStrokeWidth();
-            g.stroke({ width: strokeWidth, color: options.color ?? 0x00e5ff, alpha: options.alpha ?? 0.85 });
-            return g;
+            gObj.stroke({ width: strokeWidth, color: options.color ?? 0x00e5ff, alpha: options.alpha ?? 0.85 });
+            return gObj;
         },
         getBuildingDefinition: (type) => {
             const defsMod = game.requireModule("BUILDING_DEFINITIONS");
@@ -607,8 +989,119 @@
         },
         addBuildingTooltipLine: (buildingType, textOrProvider, style) => {
             if (!buildingType || !textOrProvider) return;
-            buildingTooltipLines.set(buildingType, { textOrProvider, style });
+            const existing = buildingTooltipLines.get(buildingType) || [];
+            existing.push({ textOrProvider, style });
+            buildingTooltipLines.set(buildingType, existing);
             game.on("ready", ensureTooltipHook);
+        },
+        addBuildingViewPanelSection: (provider) => {
+            if (typeof provider !== "function") return () => {};
+            buildingViewPanelProviders.add(provider);
+            game.on("ready", ensureBuildingViewPanelHook);
+            return () => buildingViewPanelProviders.delete(provider);
+        },
+        getBuildingSatisfaction: (buildingId, saveState) => {
+            const ss = saveState || g.__trafficityGameState?.saveState;
+            const b = ss?.buildings?.[String(buildingId)];
+            const meta = /** @type {Record<string, unknown> | undefined} */ (
+                /** @type {Record<string, unknown> | undefined} */ (ss)?.buildingHappinessMetadata
+            );
+            if (!b || !meta) return null;
+            const satMod = game.requireModule("BUILDING_HAPPINESS");
+            let overall = null;
+            if (satMod && typeof satMod.getOverallHappinessForBuilding === "function") {
+                try {
+                    overall = satMod.getOverallHappinessForBuilding(meta, buildingId, b.type);
+                } catch {
+                    overall = null;
+                }
+            }
+            /** @type {Record<string, TrafficityHappinessFactor>} */
+            const factors = {};
+            const factorGetters = [
+                ["airQuality", "getHappinessAirQuality"],
+                ["quietness", "getHappinessQuietness"],
+                ["commercial", "getHappinessCommercial"],
+                ["industrial", "getHappinessIndustrial"],
+                ["acrossMap", "getHappinessAcrossMap"],
+                ["visitorAccess", "getHappinessVisitorAccess"],
+            ];
+            for (const [key, method] of factorGetters) {
+                const fn = meta[method];
+                if (typeof fn !== "function") continue;
+                try {
+                    const reading = /** @type {{ currentValue?: number, targetValue?: number, velocity?: number } | null} */ (
+                        fn.call(meta, buildingId)
+                    );
+                    if (reading && typeof reading.currentValue === "number") {
+                        factors[key] = {
+                            current: reading.currentValue,
+                            target: typeof reading.targetValue === "number" ? reading.targetValue : reading.currentValue,
+                            velocity: typeof reading.velocity === "number" ? reading.velocity : 0,
+                        };
+                    }
+                } catch {
+                    // ignore unavailable factor
+                }
+            }
+            return { overall, factors };
+        },
+        createGraphics: () => {
+            const gfxMod = game.requireModule("PIXI_GRAPHICS");
+            return gfxMod?.Graphics ? new gfxMod.Graphics() : null;
+        },
+        createGridOverlaySprite: (gridWidth, gridHeight, cellSize) => {
+            const spriteMod = /** @type {{ Sprite?: { from?: (src: HTMLCanvasElement) => TrafficityPixiContainer & { destroyed?: boolean, x: number, y: number, width: number, height: number, texture?: { source?: { scaleMode?: string, update?: () => void } } } } } | null} */ (
+                game.requireModule("PIXI_SPRITE")
+            );
+            if (!spriteMod?.Sprite?.from || !(gridWidth > 0) || !(gridHeight > 0) || !(cellSize > 0)) return null;
+            const canvas = document.createElement("canvas");
+            canvas.width = gridWidth;
+            canvas.height = gridHeight;
+            const context = canvas.getContext("2d");
+            if (!context) return null;
+            const imageData = context.createImageData(gridWidth, gridHeight);
+            const sprite = spriteMod.Sprite.from(canvas);
+            if (sprite?.texture?.source) {
+                sprite.texture.source.scaleMode = "linear";
+            }
+            sprite.x = 0;
+            sprite.y = 0;
+            sprite.width = gridWidth * cellSize;
+            sprite.height = gridHeight * cellSize;
+            return {
+                canvas,
+                context,
+                imageData,
+                sprite,
+                update: () => {
+                    context.putImageData(imageData, 0, 0);
+                    sprite?.texture?.source?.update?.();
+                },
+            };
+        },
+        getGameState: () => g.__trafficityGameState || null,
+        refreshPollutionOverlay: () => {
+            const gs = /** @type {(TrafficityGameState & { pollutionOverlayBitmap?: { context: CanvasRenderingContext2D, imageData: ImageData, sprite: { texture: { source: { update(): void } } } } | null }) | null} */ (g.__trafficityGameState || null);
+            const bmp = gs?.pollutionOverlayBitmap;
+            const grid = gs?.saveState?.pollutionGrid;
+            if (!bmp || !grid || typeof grid.getCellCount !== "function" || typeof grid.getDrivedATMapPoint !== "function") return;
+            const cfgMod = game.requireModule("POLLUTION_OVERLAY_CONFIG");
+            const cfg = /** @type {{ derivedStartCutoff?: number, derivedFullCutoff?: number, maxOpacity?: number } | undefined} */ (cfgMod?.pollutionOverlayRenderConfig);
+            const startCutoff = cfg?.derivedStartCutoff ?? 0.2;
+            const fullCutoff = cfg?.derivedFullCutoff ?? 0.4;
+            const maxOpacity = cfg?.maxOpacity ?? 0.7;
+            const { cellSize } = game.getPollutionConfig();
+            const count = grid.getCellCount();
+            const data = bmp.imageData.data;
+            for (let i = 0; i < count; i++) {
+                const cx = grid.getCellXFromIndex(i);
+                const cy = grid.getCellYFromIndex(i);
+                const a = grid.getDrivedATMapPoint(cx * cellSize, cy * cellSize, startCutoff, fullCutoff);
+                data[4 * i + 3] = Math.round(a * maxOpacity * 255);
+            }
+            bmp.context.putImageData(bmp.imageData, 0, 0);
+            bmp.sprite?.texture?.source?.update?.();
         },
         onPollutionDiffusion: (handler) => {
             if (typeof handler !== "function") return () => {};
@@ -616,42 +1109,28 @@
             game.on("ready", ensurePollutionDiffusionHook);
             return () => pollutionDiffusionHandlers.delete(handler);
         },
-        hookRoundaboutPlacement: (wrapperFactory) => {
-            if (typeof wrapperFactory !== "function") return;
-            const apply = () => {
-                const mod = game.requireModule("ROUNDABOUT_PLACEMENT");
-                if (!mod || typeof mod.getPlaceRoundaboutResultForSize !== "function" || hookedRoundaboutModules.has(mod)) return;
-                hookedRoundaboutModules.add(mod);
-                const wrapped = wrapperFactory(mod.getPlaceRoundaboutResultForSize);
-                if (typeof wrapped === "function") {
-                    overrideExport(mod, "getPlaceRoundaboutResultForSize", wrapped);
-                }
-            };
-            game.on("ready", apply);
-        },
-        hookRoadPlacement: (wrapperFactory) => {
-            if (typeof wrapperFactory !== "function") return;
-            const apply = () => {
-                const mod = game.requireModule("ROAD_PLACEMENT");
-                if (!mod || typeof mod.getRoadConstructionActionWithPlacement !== "function" || hookedRoadPlacementModules.has(mod)) return;
-                hookedRoadPlacementModules.add(mod);
-                const wrapped = wrapperFactory(mod.getRoadConstructionActionWithPlacement);
-                if (typeof wrapped === "function") {
-                    overrideExport(mod, "getRoadConstructionActionWithPlacement", wrapped);
-                }
-            };
-            game.on("ready", apply);
-        },
+        hookRoadSnap: /** @type {TrafficityGameFacade["hookRoadSnap"]} */ (/** @type {unknown} */ (hookRoadSnapImpl)),
+        hookRoundaboutPlacement: /** @type {TrafficityGameFacade["hookRoundaboutPlacement"]} */ (/** @type {unknown} */ (hookRoundaboutPlacementImpl)),
+        hookRoadPlacement: /** @type {TrafficityGameFacade["hookRoadPlacement"]} */ (/** @type {unknown} */ (hookRoadPlacementImpl)),
         getGameRelease: () => catalog.gameRelease || null,
     };
 
+    /** @type {Map<string, Set<(...args: unknown[]) => void>>} */
     const gameListeners = new Map();
-    let readyEmitted = Boolean(globalThis.__trafficityUndoModule && globalThis.__trafficityGameState);
+    let readyEmitted = Boolean(g.__trafficityUndoModule && g.__trafficityGameState);
+    /** @type {string | null} */
     let lastCursorMode = null;
+    /** @type {number | null} */
     let lastWorldRevision = null;
+    /** @type {number | null} */
     let lastUndoLen = null;
+    /** @type {number | null} */
     let eventRafId = null;
 
+    /**
+     * @param {string} name
+     * @param {...unknown} args
+     */
     const emitGameEvent = (name, ...args) => {
         const set = gameListeners.get(name);
         if (!set) return;
@@ -667,14 +1146,14 @@
     const hasWatchedStateListeners = () =>
         ["cursorModeChange", "worldChange", "roadPlaced"].some((k) => {
             const set = gameListeners.get(k);
-            return set && set.size > 0;
+            return Boolean(set && set.size > 0);
         });
 
     const pollGameEvents = () => {
         eventRafId = null;
         if (!hasWatchedStateListeners()) return;
 
-        const gs = globalThis.__trafficityGameState;
+        const gs = g.__trafficityGameState;
         if (gs) {
             const mode = gs.cursorMode ? gs.cursorMode.mode : null;
             if (lastCursorMode !== null && mode !== lastCursorMode) {
@@ -688,7 +1167,7 @@
             }
             if (rev !== null) lastWorldRevision = rev;
 
-            const undoHist = globalThis.__trafficityUndoHistory;
+            const undoHist = g.__trafficityUndoHistory;
             if (gs.saveState && undoHist && typeof undoHist.getUndoHistory === "function") {
                 const hist = undoHist.getUndoHistory(gs.saveState);
                 const len = hist && Array.isArray(hist.entries) ? hist.entries.length : null;
@@ -706,7 +1185,7 @@
 
     const ensureReady = () => {
         if (readyEmitted) return;
-        if (globalThis.__trafficityUndoModule || globalThis.__trafficityGameState) {
+        if (g.__trafficityUndoModule || g.__trafficityGameState) {
             readyEmitted = true;
             emitGameEvent("ready");
         }
@@ -714,7 +1193,7 @@
     window.addEventListener("trafficity:undo-ready", ensureReady, { once: true });
     window.addEventListener("load", ensureReady, { once: true });
 
-    game.on = (event, handler) => {
+    game.on = /** @type {TrafficityGameFacade["on"]} */ ((/** @type {string} */ event, /** @type {(...args: unknown[]) => void} */ handler) => {
         if (!event || typeof handler !== "function") return () => {};
         let set = gameListeners.get(event);
         if (!set) {
@@ -735,14 +1214,20 @@
                 eventRafId = null;
             }
         };
-    };
+    });
 
     const BUILDING_CATEGORIES = new Set(["residential", "commercial", "office", "industrial"]);
     const BUILDING_POLLUTION_LEVELS = new Set(["none", "low", "medium", "high"]);
     const BUILDING_RESOURCES = new Set(["food", "copper", "iron", "steel", "cpg"]);
     const BUILDING_TERRAINS = new Set(["water", "land", "mountain", "void", "sand", "grass", "wasteland", "deepwasteland"]);
+    /** @type {Record<string, string>} */
     const BUILDING_CATEGORY_COLORS = { residential: "#78CC51", commercial: "#3997e4", office: "#9b59d0", industrial: "#e8bd2c" };
 
+    /**
+     * @param {object} mod
+     * @param {string} key
+     * @param {unknown} value
+     */
     const overrideExport = (mod, key, value) => {
         if (!mod || typeof mod !== "object") return;
         Object.defineProperty(mod, key, { value, writable: true, configurable: true, enumerable: true });
@@ -750,6 +1235,7 @@
 
     /** Declarative definition and lifecycle hooks for a custom Trafficity building type. */
     class CustomBuilding {
+        /** @param {TrafficityCustomBuildingConfig} config */
         constructor(config) {
             if (!config || typeof config.type !== "string" || !config.type.trim()) {
                 throw new Error("CustomBuilding requires a non-empty `type` string.");
@@ -815,7 +1301,7 @@
             this.defaultQuota = typeof config.defaultQuota === "number" ? config.defaultQuota : 0;
             this._extrusionFactory = typeof config.getExtrusions === "function"
                 ? config.getExtrusions
-                : (w, d) => [{
+                : (/** @type {number} */ w, /** @type {number} */ d) => [{
                     points: [
                         { x: 4, y: Math.min(20, d * 0.25), height: config.extrusionHeight ?? 35 },
                         { x: 4, y: d - 4, height: config.extrusionHeight ?? 35 },
@@ -833,6 +1319,7 @@
         }
 
         toWorkerSafeDefinition() {
+            /** @type {Record<string, unknown>} */
             const def = {
                 type: this.type,
                 buildingCategory: this.buildingCategory,
@@ -860,7 +1347,7 @@
         }
 
         toMainDefinition() {
-            return { ...this.toWorkerSafeDefinition(), getExtrusions: (w, d) => this._extrusionFactory(w, d, this) };
+            return { ...this.toWorkerSafeDefinition(), getExtrusions: (/** @type {number} */ w, /** @type {number} */ d) => this._extrusionFactory(w, d, this) };
         }
 
         getDisplayName(lang = "en") {
@@ -871,36 +1358,43 @@
             if (!this.vehicles) return 0;
             if ("cars" in this.vehicles) return this.vehicles.cars || 0;
             let total = 0;
-            for (const map of [this.vehicles.trucks, this.vehicles.vans]) {
+            const v = /** @type {{ trucks?: Record<string, number>, vans?: Record<string, number> }} */ (this.vehicles);
+            for (const map of [v.trucks, v.vans]) {
                 if (map) for (const n of Object.values(map)) total += n;
             }
             return total;
         }
     }
 
+    /** @type {Map<string, CustomBuilding>} */
     const customBuildings = new Map();
     let buildingHooksAttached = false;
     let workerHookInstalled = false;
+    /** @type {number | null} */
     let lastSelectedBuildingId = null;
 
+    /**
+     * @param {string} source
+     * @param {Array<{ def: Record<string, unknown>, vehicles: unknown, needsVisited: boolean }>} entries
+     */
     const injectBuildingsIntoWorkerSource = (source, entries) => {
-        const bootAnchor = ',l("fHJ87")';
+        const bootAnchor = `,l(${JSON.stringify(WORKER_MODULES.BOOT)})`;
         const idx = source.lastIndexOf(bootAnchor);
         if (idx === -1) return source;
         const injection = `,(() => {
             const entries = ${JSON.stringify(entries)};
             const byType = new Map(entries.map((x) => [x.def.type, x]));
             const setExp = (m, k, v) => Object.defineProperty(m, k, { value: v, writable: true, configurable: true, enumerable: true });
-            const defMod = l("aS4Aq");
+            const defMod = l(${JSON.stringify(WORKER_MODULES.BUILDING_DEFINITIONS)});
             const origGetDef = defMod.getBuildingDefinition;
             setExp(defMod, "getBuildingDefinition", (t) => byType.has(t) ? byType.get(t).def : origGetDef(t));
             try {
-                const visMod = l("6hect");
+                const visMod = l(${JSON.stringify(WORKER_MODULES.BUILDING_VISITED_NEEDS)});
                 const origVis = visMod.buildingHasGetVisitedNeed;
                 setExp(visMod, "buildingHasGetVisitedNeed", (t) => byType.has(t) ? Boolean(byType.get(t).needsVisited) : origVis(t));
             } catch {}
             try {
-                const carMod = l("3baQI");
+                const carMod = l(${JSON.stringify(WORKER_MODULES.BUILDING_VEHICLE_SPECS)});
                 if (carMod && typeof carMod.getBuildingCarCountSpec === "function") {
                     const oSpec = carMod.getBuildingCarCountSpec;
                     const oRes = carMod.getResidentCarCountForResidentialBuildingType;
@@ -930,7 +1424,11 @@
         if (workerHookInstalled || typeof window.Worker !== "function") return;
         workerHookInstalled = true;
         const NativeWorker = window.Worker;
-        window.Worker = function PatchedTrafficityWorker(scriptURL, options) {
+        /**
+         * @param {string | URL} scriptURL
+         * @param {WorkerOptions} [options]
+         */
+        function PatchedTrafficityWorker(scriptURL, options) {
             const urlStr = String(scriptURL);
             const isGameWorker = !options?.type && (
                 urlStr.includes("car-worker") || urlStr.includes("happiness-worker") || urlStr.includes("pathfinding-worker")
@@ -956,8 +1454,9 @@
                 console.warn("[TrafficityMods] Worker building patch fallback:", err);
             }
             return new NativeWorker(scriptURL, options);
-        };
-        window.Worker.prototype = NativeWorker.prototype;
+        }
+        PatchedTrafficityWorker.prototype = NativeWorker.prototype;
+        window.Worker = /** @type {typeof Worker} */ (/** @type {unknown} */ (PatchedTrafficityWorker));
     };
     installWorkerBuildingHook();
 
@@ -967,8 +1466,9 @@
         if (!defsMod || !Array.isArray(defsMod.BUILDING_DEFINITIONS)) return;
         buildingHooksAttached = true;
 
+        /** @param {CustomBuilding} b */
         const upsertMain = (b) => {
-            const def = b.toMainDefinition();
+            const def = /** @type {TrafficityBuildingDefinition} */ (/** @type {unknown} */ (b.toMainDefinition()));
             const idx = defsMod.BUILDING_DEFINITIONS.findIndex((d) => d.type === b.type);
             if (idx !== -1) defsMod.BUILDING_DEFINITIONS[idx] = def;
             else defsMod.BUILDING_DEFINITIONS.push(def);
@@ -977,14 +1477,20 @@
 
         const origGetDef = defsMod.getBuildingDefinition;
         const origGetColor = defsMod.getBuildingDefaultColor;
-        overrideExport(defsMod, "getBuildingDefinition", (t) => customBuildings.has(t) ? customBuildings.get(t).toMainDefinition() : origGetDef(t));
-        overrideExport(defsMod, "getBuildingDefaultColor", (t) => customBuildings.has(t) ? customBuildings.get(t).buildingColors[0] : origGetColor(t));
+        overrideExport(defsMod, "getBuildingDefinition", (/** @type {string} */ t) => {
+            const b = customBuildings.get(t);
+            return b ? b.toMainDefinition() : origGetDef(t);
+        });
+        overrideExport(defsMod, "getBuildingDefaultColor", (/** @type {string} */ t) => {
+            const b = customBuildings.get(t);
+            return b ? b.buildingColors[0] : origGetColor(t);
+        });
 
         const displayMod = game.requireModule("BUILDING_DISPLAY_NAMES");
         const i18nMod = game.requireModule("I18N");
         if (displayMod?.buildingDisplayName) {
             const origName = displayMod.buildingDisplayName;
-            overrideExport(displayMod, "buildingDisplayName", (t) => {
+            overrideExport(displayMod, "buildingDisplayName", (/** @type {string} */ t) => {
                 const b = customBuildings.get(t);
                 if (!b) return origName(t);
                 const lang = typeof i18nMod?.getLocalisationLanguage === "function" ? i18nMod.getLocalisationLanguage() : "en";
@@ -997,28 +1503,45 @@
             const oSpec = carSpecMod.getBuildingCarCountSpec;
             const oRes = carSpecMod.getResidentCarCountForResidentialBuildingType;
             const oTot = carSpecMod.getTotalVehicleCountForBuildingType;
-            overrideExport(carSpecMod, "getBuildingCarCountSpec", (t) => customBuildings.has(t) ? customBuildings.get(t).vehicles : oSpec(t));
-            overrideExport(carSpecMod, "getResidentCarCountForResidentialBuildingType", (t) => {
+            overrideExport(carSpecMod, "getBuildingCarCountSpec", (/** @type {string} */ t) => {
+                const b = customBuildings.get(t);
+                return b ? b.vehicles : oSpec(t);
+            });
+            overrideExport(carSpecMod, "getResidentCarCountForResidentialBuildingType", (/** @type {string} */ t) => {
                 const b = customBuildings.get(t);
                 return b ? (b.vehicles && "cars" in b.vehicles ? b.vehicles.cars : 0) : oRes(t);
             });
-            overrideExport(carSpecMod, "getTotalVehicleCountForBuildingType", (t) => customBuildings.has(t) ? customBuildings.get(t).getTotalVehicleCount() : oTot(t));
+            overrideExport(carSpecMod, "getTotalVehicleCountForBuildingType", (/** @type {string} */ t) => {
+                const b = customBuildings.get(t);
+                return b ? b.getTotalVehicleCount() : oTot(t);
+            });
         }
 
         const visitedMod = game.requireModule("BUILDING_VISITED_NEEDS");
         if (visitedMod?.buildingHasGetVisitedNeed) {
             const oVis = visitedMod.buildingHasGetVisitedNeed;
-            overrideExport(visitedMod, "buildingHasGetVisitedNeed", (t) => customBuildings.has(t) ? customBuildings.get(t).needsVisited : oVis(t));
+            overrideExport(visitedMod, "buildingHasGetVisitedNeed", (/** @type {string} */ t) => {
+                const b = customBuildings.get(t);
+                return b ? b.needsVisited : oVis(t);
+            });
         }
 
         const satMod = game.requireModule("BUILDING_SATISFACTION_WEIGHTS");
         if (satMod?.getSatisfactionWeightForBuildingType) {
             const oSat = satMod.getSatisfactionWeightForBuildingType;
-            overrideExport(satMod, "getSatisfactionWeightForBuildingType", (t) => customBuildings.has(t) ? customBuildings.get(t).satisfactionWeight : oSat(t));
+            overrideExport(satMod, "getSatisfactionWeightForBuildingType", (/** @type {string} */ t) => {
+                const b = customBuildings.get(t);
+                return b ? b.satisfactionWeight : oSat(t);
+            });
         }
 
         const placeMod = game.requireModule("BUILDING_PLACEMENT");
         if (placeMod) {
+            /**
+             * @param {TrafficityGameState} st
+             * @param {Set<string>} prevIds
+             * @param {Record<string, unknown>} deps
+             */
             const finalizePlaced = (st, prevIds, deps) => {
                 for (const [id, rec] of Object.entries(st.saveState?.buildings || {})) {
                     if (prevIds.has(id)) continue;
@@ -1026,8 +1549,11 @@
                     if (!b) continue;
                     if (b.buildingCategory === "residential" && b.vehicles && "cars" in b.vehicles && b.vehicles.cars > 0) {
                         if (!b.garage) {
+                            const spawn = deps && typeof deps.spawnOutdoorResidentialCar === "function"
+                                ? /** @type {(...args: unknown[]) => void} */ (deps.spawnOutdoorResidentialCar)
+                                : null;
                             for (let i = 0; i < Math.min(b.vehicles.cars, b.parkingSpaces.length); i++) {
-                                deps?.spawnOutdoorResidentialCar?.(rec.id, rec.type, rec.footprint, i, st);
+                                spawn?.(rec.id, rec.type, rec.footprint, i, st);
                             }
                         }
                     }
@@ -1036,13 +1562,13 @@
             };
             const oPlace = placeMod.placeBuildingsFromFootprints;
             const oRestore = placeMod.restoreBuildingsAtFootprints;
-            overrideExport(placeMod, "placeBuildingsFromFootprints", (st, typeName, fps, deps, sfx) => {
+            overrideExport(placeMod, "placeBuildingsFromFootprints", (/** @type {TrafficityGameState} */ st, /** @type {string} */ typeName, /** @type {TrafficityBuildingFootprint[]} */ fps, /** @type {Record<string, unknown>} */ deps, /** @type {boolean | undefined} */ sfx) => {
                 const prev = new Set(Object.keys(st.saveState?.buildings || {}));
                 const res = oPlace(st, typeName, fps, deps, sfx);
                 finalizePlaced(st, prev, deps);
                 return res;
             });
-            overrideExport(placeMod, "restoreBuildingsAtFootprints", (st, items, deps) => {
+            overrideExport(placeMod, "restoreBuildingsAtFootprints", (/** @type {TrafficityGameState} */ st, /** @type {Array<{ definition: TrafficityBuildingDefinition, footprint: TrafficityBuildingFootprint }>} */ items, /** @type {Record<string, unknown>} */ deps) => {
                 const prev = new Set(Object.keys(st.saveState?.buildings || {}));
                 const res = oRestore(st, items, deps);
                 finalizePlaced(st, prev, deps);
@@ -1053,10 +1579,11 @@
         const delMod = game.requireModule("BUILDING_DELETION");
         if (delMod?.deleteBuildingsFromGameState) {
             const oDel = delMod.deleteBuildingsFromGameState;
-            overrideExport(delMod, "deleteBuildingsFromGameState", (st, ids) => {
+            overrideExport(delMod, "deleteBuildingsFromGameState", (/** @type {TrafficityGameState} */ st, /** @type {number[]} */ ids) => {
+                /** @type {Array<[TrafficityBuildingRecord, CustomBuilding]>} */
                 const deleting = [];
                 for (const id of ids) {
-                    const rec = st.saveState?.buildings?.[id];
+                    const rec = st.saveState?.buildings?.[String(id)];
                     const b = rec ? customBuildings.get(rec.type) : null;
                     if (rec && b) deleting.push([rec, b]);
                 }
@@ -1077,43 +1604,46 @@
             };
             const oCreate = gfxMod.createBuildingGraphicsParts;
             const oUpdate = gfxMod.updateBuildingGraphics;
-            overrideExport(gfxMod, "createBuildingGraphicsParts", (st, rec, opts) => {
+            overrideExport(gfxMod, "createBuildingGraphicsParts", (/** @type {TrafficityGameState} */ st, /** @type {TrafficityBuildingRecord} */ rec, /** @type {Record<string, unknown> | undefined} */ opts) => {
                 const parts = oCreate(st, rec, opts);
                 const b = customBuildings.get(rec.type);
                 b?._hooks.onRenderWorld?.(parts, rec, st, pixi, b);
                 return parts;
             });
-            overrideExport(gfxMod, "updateBuildingGraphics", (st, rec, opts) => {
+            overrideExport(gfxMod, "updateBuildingGraphics", (/** @type {TrafficityGameState} */ st, /** @type {TrafficityBuildingRecord} */ rec, /** @type {Record<string, unknown> | undefined} */ opts) => {
                 oUpdate(st, rec, opts);
                 const b = customBuildings.get(rec.type);
                 if (!b?._hooks.onRenderWorld) return;
                 const obj = st.buildingGraphics?.object?.get(rec.id);
                 if (obj) {
-                    b._hooks.onRenderWorld({
+                    const parts = /** @type {TrafficityBuildingGraphicsParts} */ ({
                         object: obj,
-                        ground: st.buildingGraphics.ground?.get(rec.id),
-                        groundSidewalk: st.buildingGraphics.groundSidewalk?.get(rec.id),
-                        shadow: st.buildingGraphics.shadow?.get(rec.id),
-                    }, rec, st, pixi, b);
+                        ground: st.buildingGraphics?.ground?.get(rec.id),
+                        groundSidewalk: st.buildingGraphics?.groundSidewalk?.get(rec.id),
+                        shadow: st.buildingGraphics?.shadow?.get(rec.id),
+                    });
+                    b._hooks.onRenderWorld(parts, rec, st, pixi, b);
                 }
             });
         }
 
         window.addEventListener("click", () => queueMicrotask(() => {
-            const st = globalThis.__trafficityGameState;
+            const st = g.__trafficityGameState;
             if (!st?.worldSelection) return;
-            const selId = st.worldSelection.type === "building" ? st.worldSelection.buildingId : null;
+            const selId = st.worldSelection.type === "building" && typeof st.worldSelection.buildingId === "number"
+                ? st.worldSelection.buildingId
+                : null;
             if (selId === lastSelectedBuildingId) return;
             lastSelectedBuildingId = selId;
             if (selId !== null) {
-                const rec = st.saveState?.buildings?.[selId];
+                const rec = st.saveState?.buildings?.[String(selId)];
                 const b = rec ? customBuildings.get(rec.type) : null;
                 b?._hooks.onSelect?.(st, rec, b);
             }
         }), true);
 
         const seedQuotas = () => {
-            const st = globalThis.__trafficityGameState;
+            const st = g.__trafficityGameState;
             if (!st?.saveState?.cumulativeBuildingCount) return;
             let changed = false;
             for (const b of customBuildings.values()) {
@@ -1128,16 +1658,19 @@
         seedQuotas();
     };
 
+    /** @type {TrafficityBuildingsApi} */
     const buildingsApi = {
         CustomBuilding,
         register: (configOrInstance) => {
-            const b = configOrInstance instanceof CustomBuilding ? configOrInstance : new CustomBuilding(configOrInstance);
+            const b = configOrInstance instanceof CustomBuilding
+                ? configOrInstance
+                : new CustomBuilding(/** @type {TrafficityCustomBuildingConfig} */ (configOrInstance));
             customBuildings.set(b.type, b);
             if (buildingHooksAttached) {
                 const defsMod = game.requireModule("BUILDING_DEFINITIONS");
                 if (defsMod?.BUILDING_DEFINITIONS) {
                     const idx = defsMod.BUILDING_DEFINITIONS.findIndex((d) => d.type === b.type);
-                    const def = b.toMainDefinition();
+                    const def = /** @type {TrafficityBuildingDefinition} */ (/** @type {unknown} */ (b.toMainDefinition()));
                     if (idx !== -1) defsMod.BUILDING_DEFINITIONS[idx] = def;
                     else defsMod.BUILDING_DEFINITIONS.push(def);
                 }
@@ -1161,6 +1694,7 @@
         "wheel",
     ];
 
+    /** @param {HTMLElement} el */
     const isolateUiElement = (el) => {
         if (!el || typeof el.addEventListener !== "function") return;
         for (const type of UI_ISOLATION_EVENTS) {
@@ -1170,45 +1704,58 @@
         }
     };
 
+    /** @type {TrafficityModsApi} */
     const api = {
         version: "1.4.2",
         game,
         buildings: buildingsApi,
-        extendGame: (methods) => {
+        extendGame: /** @type {TrafficityModsApi["extendGame"]} */ ((/** @type {Record<string, unknown>} */ methods) => {
             if (methods && typeof methods === "object") {
                 Object.assign(game, methods);
             }
             return game;
-        },
+        }),
         getMods: () => catalog.mods.slice(),
         getModsDir: () => catalog.modsDir,
-        provide: (name, serviceApi) => {
+        provide: (/** @type {string} */ name, /** @type {unknown} */ serviceApi) => {
             if (name) services.set(name, serviceApi);
         },
-        use: (name) => services.get(name) || null,
+        use: /** @type {TrafficityModsApi["use"]} */ ((/** @type {string} */ name) => services.get(name) || null),
         bindKey: (combo, handler) => {
-            if (typeof handler !== "function") return;
-            keyBindings.push({ combo, spec: parseCombo(combo), handler });
+            if (typeof handler !== "function") return () => {};
+            const entry = { combo, spec: parseCombo(combo), handler };
+            keyBindings.push(entry);
+            return () => {
+                const idx = keyBindings.indexOf(entry);
+                if (idx !== -1) keyBindings.splice(idx, 1);
+            };
         },
         sendSyntheticKey: (code, key, keyCode, modifiers) => {
             dispatchSyntheticKey(code, key ? { key, keyCode: keyCode || 0 } : null, modifiers);
         },
-        onMouse: (type, handler, options = {}) => {
-            if (typeof handler !== "function") return;
+        onMouse: /** @type {TrafficityModsApi["onMouse"]} */ ((/** @type {string} */ type, /** @type {(event: Event) => void} */ handler, /** @type {boolean | AddEventListenerOptions} */ options = {}) => {
+            if (typeof handler !== "function") return () => {};
+            /** @type {EventListener} */
             const wrapped = (event) => {
-                if (event && event[SYNTHETIC_FLAG]) return;
+                if (event && /** @type {Event & Record<string, unknown>} */ (/** @type {unknown} */ (event))[SYNTHETIC_FLAG]) return;
                 handler(event);
             };
             const listenerOpts =
                 typeof options === "boolean" ? true : { ...options, capture: true };
-            mouseBindings.push({ type, wrapped, listenerOpts });
+            const entry = { type, wrapped, listenerOpts };
+            mouseBindings.push(entry);
             window.addEventListener(type, wrapped, listenerOpts);
-        },
-        getConfig: (modId, defaults = {}) => {
+            return () => {
+                window.removeEventListener(type, wrapped, listenerOpts);
+                const idx = mouseBindings.indexOf(entry);
+                if (idx !== -1) mouseBindings.splice(idx, 1);
+            };
+        }),
+        getConfig: /** @type {TrafficityModsApi["getConfig"]} */ ((/** @type {string} */ modId, /** @type {Record<string, unknown>} */ defaults = {}) => {
             const modEntry = catalog.mods.find((entry) => entry.id === modId);
             const savedConfig = modEntry && modEntry.config ? modEntry.config : {};
             return { ...defaults, ...savedConfig };
-        },
+        }),
         defineMod: (setupMod) => setupMod,
         setConfig: async (modId, config) => {
             const mod = catalog.mods.find((m) => m.id === modId);
@@ -1223,7 +1770,7 @@
         },
         addOverlay: (id, content) => {
             const mount = () => {
-                let host = document.getElementById(`tmod-overlay-${id}`);
+                let host = /** @type {HTMLDivElement | null} */ (document.getElementById(`tmod-overlay-${id}`));
                 if (!host) {
                     host = document.createElement("div");
                     host.id = `tmod-overlay-${id}`;
@@ -1235,9 +1782,11 @@
                 } else if (content instanceof Node) {
                     host.replaceChildren(content);
                 }
+                return host;
             };
-            if (document.body) mount();
-            else window.addEventListener("DOMContentLoaded", mount, { once: true });
+            if (document.body) return mount();
+            window.addEventListener("DOMContentLoaded", () => { mount(); }, { once: true });
+            return null;
         },
     };
 
@@ -1255,12 +1804,17 @@
         console.warn("[TrafficityMods] Failed to load mod catalog:", err);
     }
 
+    /** @param {TrafficityCatalogMod[]} mods */
     const resolveModLoadOrder = (mods) => {
         const byId = new Map(mods.map((m) => [m.id, m]));
+        /** @type {Map<string, string>} */
         const warnings = new Map();
+        /** @type {TrafficityCatalogMod[]} */
         const ordered = [];
+        /** @type {Map<string, number>} */
         const state = new Map(); // 0=unvisited, 1=visiting, 2=visited
 
+        /** @param {TrafficityCatalogMod} mod */
         const visit = (mod) => {
             const st = state.get(mod.id) || 0;
             if (st === 2) return true;
@@ -1336,6 +1890,7 @@
     const hasPendingModToggle = () =>
         (catalog.mods || []).some((entry) => Boolean(entry.enabled) !== Boolean(initialEnabledById.get(entry.id)));
 
+    /** @param {unknown} str */
     const escapeHtml = (str) =>
         String(str)
             .replaceAll("&", "&amp;")
@@ -1347,12 +1902,13 @@
         const root = document.getElementById("trafficity-mod-manager-root");
         if (!root) return;
 
-        const drawer = root.querySelector("#tmod-drawer");
+        const drawer = /** @type {HTMLElement | null} */ (root.querySelector("#tmod-drawer"));
         if (!drawer) return;
         drawer.style.display = drawerOpen ? "flex" : "none";
 
-        const list = root.querySelector("#tmod-list");
-        const restartBanner = root.querySelector("#tmod-restart-banner");
+        const list = /** @type {HTMLElement | null} */ (root.querySelector("#tmod-list"));
+        const restartBanner = /** @type {HTMLElement | null} */ (root.querySelector("#tmod-restart-banner"));
+        if (!list || !restartBanner) return;
         restartBanner.style.display = hasPendingModToggle() ? "flex" : "none";
 
         if (!catalog.mods || catalog.mods.length === 0) {
@@ -1393,8 +1949,10 @@
 
         for (const checkbox of list.querySelectorAll("input[type='checkbox'][data-mod-id]")) {
             checkbox.addEventListener("change", async (event) => {
-                const id = event.target.getAttribute("data-mod-id");
-                const enabled = event.target.checked;
+                const input = /** @type {HTMLInputElement | null} */ (event.target);
+                if (!input) return;
+                const id = input.getAttribute("data-mod-id");
+                const enabled = input.checked;
                 await fetch("/api/mods/toggle", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -1478,21 +2036,27 @@
         `;
         document.body.appendChild(root);
 
-        root.querySelector("#tmod-pill").addEventListener("click", toggleManagerDrawer);
-        root.querySelector("#tmod-close").addEventListener("click", toggleManagerDrawer);
+        root.querySelector("#tmod-pill")?.addEventListener("click", toggleManagerDrawer);
+        root.querySelector("#tmod-close")?.addEventListener("click", toggleManagerDrawer);
+        /**
+         * @param {string} label
+         * @param {string} targetPath
+         */
         const showPathBanner = (label, targetPath) => {
-            const banner = root.querySelector("#tmod-path-banner");
-            root.querySelector("#tmod-path-label").textContent = label;
-            root.querySelector("#tmod-path-value").textContent = targetPath;
-            banner.style.display = "flex";
+            const banner = /** @type {HTMLElement | null} */ (root.querySelector("#tmod-path-banner"));
+            const labelEl = root.querySelector("#tmod-path-label");
+            const valueEl = root.querySelector("#tmod-path-value");
+            if (labelEl) labelEl.textContent = label;
+            if (valueEl) valueEl.textContent = targetPath;
+            if (banner) banner.style.display = "flex";
         };
-        root.querySelector("#tmod-copy-path").addEventListener("click", async () => {
-            const val = root.querySelector("#tmod-path-value").textContent;
+        root.querySelector("#tmod-copy-path")?.addEventListener("click", async () => {
+            const val = root.querySelector("#tmod-path-value")?.textContent;
             if (val && navigator.clipboard) {
                 await navigator.clipboard.writeText(val);
             }
         });
-        root.querySelector("#tmod-open-folder").addEventListener("click", async () => {
+        root.querySelector("#tmod-open-folder")?.addEventListener("click", async () => {
             if (window.trafficityDesktop && typeof window.trafficityDesktop.openModsFolder === "function") {
                 const res = await window.trafficityDesktop.openModsFolder();
                 if (res && typeof res === "object" && !res.ok) {
@@ -1506,7 +2070,7 @@
                 showPathBanner("Mods folder:", catalog.modsDir);
             }
         });
-        root.querySelector("#tmod-refresh").addEventListener("click", async () => {
+        root.querySelector("#tmod-refresh")?.addEventListener("click", async () => {
             const res = await fetch("/api/mods");
             if (res.ok) {
                 catalog = await res.json();
@@ -1520,8 +2084,8 @@
                 window.location.reload();
             }
         };
-        root.querySelector("#tmod-reload").addEventListener("click", doReload);
-        root.querySelector("#tmod-reload-banner").addEventListener("click", doReload);
+        root.querySelector("#tmod-reload")?.addEventListener("click", doReload);
+        root.querySelector("#tmod-reload-banner")?.addEventListener("click", doReload);
 
         renderManager();
     };

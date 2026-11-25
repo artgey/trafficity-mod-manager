@@ -13,11 +13,19 @@ const { extractSettingsSchema } = require("./toml.cjs");
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export const runHealthCheck = async ({
-    gameDir = null,
+    gameDir = /** @type {string | null} */ (null),
     modsDir = resolveDefaultModsDir(),
     checkRemote = true,
 } = {}) => {
+    /** @type {Array<{ id: string, status: string, title: string, detail: string, fixAction: string }>} */
     const checks = [];
+    /**
+     * @param {string} id
+     * @param {string} status
+     * @param {string} title
+     * @param {string} detail
+     * @param {string} [fixAction]
+     */
     const addCheck = (id, status, title, detail, fixAction = "") => {
         checks.push({ id, status, title, detail, fixAction });
     };
@@ -63,7 +71,7 @@ export const runHealthCheck = async ({
     } else {
         let missingAssets = [];
         try {
-            const files = asar.listPackage(asarPath);
+            const files = asar.listPackage(asarPath, { isPack: false });
             for (const reqFile of ["/electron/mod-api.cjs", "/electron/toml.cjs", "/electron/mod-loader.js"]) {
                 if (!files.includes(reqFile)) missingAssets.push(reqFile.slice(1));
             }
@@ -103,6 +111,7 @@ export const runHealthCheck = async ({
 
     // 5. mods-config.json validity
     const configPath = path.join(path.dirname(resolvedModsDir), "mods-config.json");
+    /** @type {Record<string, boolean>} */
     let enabledMap = {};
     if (!fs.existsSync(configPath)) {
         addCheck("mods-config", "pass", "Mod Config File", "No mods-config.json yet (will be created when you toggle a mod).");
@@ -220,8 +229,9 @@ export const runHealthCheck = async ({
     };
 };
 
+/** @param {string[]} argv */
 const parseArgs = (argv) => {
-    const out = { gameDir: null, offline: false, json: false, syncTypes: false };
+    const out = { gameDir: /** @type {string | null} */ (null), offline: false, json: false, syncTypes: false };
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         if (arg === "--game-dir" && argv[i + 1]) {

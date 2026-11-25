@@ -5,10 +5,13 @@
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     "allowJs": true,
-    "checkJs": false
+    "checkJs": true,
+    "strict": true,
+    "types": ["node"]
   },
   "include": [
     "src/**/*.mjs",
+    "src/**/*.cjs",
     "runtime/**/*.js",
     "examples/**/*.js",
     "examples/**/*.d.ts",

@@ -17,6 +17,8 @@ export const DEFAULT_REGISTRY_URL =
 /**
  * Pure-Node ZIP extractor supporting Stored (method 0) and Deflate (method 8).
  * Validates entry paths to prevent directory traversal.
+ * @param {Buffer | Uint8Array} zipBuffer
+ * @param {string} destDir
  */
 export const extractZipBuffer = async (zipBuffer, destDir) => {
     const buf = Buffer.isBuffer(zipBuffer) ? zipBuffer : Buffer.from(zipBuffer);
@@ -93,7 +95,12 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const LOCAL_REGISTRY_PATH = path.join(REPO_ROOT, "registry.json");
 const BASE_TYPES_PATH = path.join(REPO_ROOT, "types", "trafficity-mods.d.ts");
 
+/**
+ * @param {string} modDir
+ * @param {{ excludeNames?: string[], excludeExts?: string[] }} [options]
+ */
 export const walkModFiles = async (modDir, { excludeNames = [], excludeExts = [] } = {}) => {
+    /** @type {string[]} */
     const files = [];
     const skipNames = new Set(["node_modules", ...excludeNames]);
     const walk = async (rel = "") => {
@@ -114,6 +121,7 @@ export const walkModFiles = async (modDir, { excludeNames = [], excludeExts = []
     return files.sort();
 };
 
+/** @param {string} modDir */
 export const computeModCodeHash = async (modDir) => {
     const files = await walkModFiles(modDir, { excludeNames: ["settings.toml"], excludeExts: [".test.mjs", ".zip"] });
     const hash = crypto.createHash("sha256");
@@ -126,6 +134,7 @@ export const computeModCodeHash = async (modDir) => {
     return hash.digest("hex");
 };
 
+/** @param {string} [modsDir] */
 export const ensureModsWorkspaceTypes = async (modsDir) => {
     const targetModsDir = modsDir || (await getDefaultModsDir());
     await fsp.mkdir(targetModsDir, { recursive: true });
@@ -146,7 +155,8 @@ export const ensureModsWorkspaceTypes = async (modsDir) => {
                         moduleResolution: "bundler",
                         moduleDetection: "force",
                         allowJs: true,
-                        checkJs: false,
+                        checkJs: true,
+                        strict: false,
                     },
                     include: ["**/*.js", "**/*.mjs", "**/*.d.ts", ".tmod-types/**/*.d.ts"],
                 },
@@ -178,6 +188,9 @@ export const fetchRegistry = async (registryUrl = process.env.TRAFFICITY_REGISTR
     return data;
 };
 
+/**
+ * @param {{ downloadUrl: string, sha256?: string | null, id?: string | null, modsDir?: string | null }} options
+ */
 export const installModFromZip = async ({ downloadUrl, sha256 = null, id = null, modsDir = null }) => {
     const resolvedModsDir = modsDir || (await getDefaultModsDir());
     const res = await fetch(downloadUrl);
@@ -227,7 +240,13 @@ export const installModFromZip = async ({ downloadUrl, sha256 = null, id = null,
     }
 };
 
+/**
+ * @param {string} modsDir
+ * @param {string} manifestId
+ * @param {string} targetDirName
+ */
 const findMatchingInstalledDirs = async (modsDir, manifestId, targetDirName) => {
+    /** @type {Array<{ name: string, dirPath: string, entryId: string | null }>} */
     const matches = [];
     if (!fs.existsSync(modsDir)) return matches;
     for (const entry of await fsp.readdir(modsDir, { withFileTypes: true })) {
@@ -253,6 +272,7 @@ const findMatchingInstalledDirs = async (modsDir, manifestId, targetDirName) => 
 /**
  * Installs or replaces a mod directory in `modsDir`, deduplicating folders that share
  * the same `manifestId` and preserving any user-modified `settings.toml` values.
+ * @param {{ sourceDir: string, targetDirName: string, manifestId: string, manifest?: Record<string, unknown> | null, modsDir?: string | null, originSource?: string }} options
  */
 export const installModDirectory = async ({
     sourceDir,
@@ -335,11 +355,15 @@ export const installModDirectory = async ({
  * - Replaces outdated or code-modified example mods while preserving user `settings.toml` values
  * - Leaves already up-to-date, unaffected example mods untouched
  */
+/**
+ * @param {{ modsDir?: string | null, examplesDir?: string }} [options]
+ */
 export const syncExampleMods = async ({
     modsDir = null,
     examplesDir = path.join(REPO_ROOT, "examples"),
 } = {}) => {
     const targetModsDir = modsDir || (await getDefaultModsDir());
+    /** @type {{ installed: string[], updated: string[], unchanged: string[], deduplicated: number }} */
     const result = { installed: [], updated: [], unchanged: [], deduplicated: 0 };
     if (!fs.existsSync(examplesDir)) {
         return result;
@@ -394,6 +418,10 @@ export const syncExampleMods = async ({
     return result;
 };
 
+/**
+ * @param {string} idOrUrl
+ * @param {{ modsDir?: string, registryUrl?: string }} [options]
+ */
 export const installModByIdOrUrl = async (idOrUrl, options = {}) => {
     const modsDir = options.modsDir || (await getDefaultModsDir());
     if (/^https?:\/\//i.test(idOrUrl)) {
