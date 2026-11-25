@@ -1,17 +1,28 @@
-// Standalone Redo mod hooking Trafficity's f5Ojv undo journal via TrafficityMods.game.
-const getMods = () => (typeof window !== "undefined" ? window.TrafficityMods : null);
+// Standalone Redo mod hooking Trafficity's undo journal via TrafficityMods.game.
 
+/**
+ * @param {Map<number | string, number | string> | undefined} map
+ * @param {number | string} id
+ */
 const resolveRenamed = (map, id) => {
     if (!map || typeof map.get !== "function") return id;
     let cur = id;
     const seen = new Set();
     while (map.has(cur) && !seen.has(cur)) {
         seen.add(cur);
-        cur = map.get(cur);
+        const next = map.get(cur);
+        if (next === undefined) break;
+        cur = next;
     }
     return cur;
 };
 
+/**
+ * @param {TrafficityUndoSubRecord | null | undefined} subRecord
+ * @param {TrafficityGameState | null | undefined} gameState
+ * @param {TrafficityUndoHistory | null | undefined} history
+ * @returns {TrafficityUndoSubRecord | null}
+ */
 export const buildRedoSubRecord = (subRecord, gameState, history) => {
     if (!subRecord || subRecord.kind !== "confirm" || !subRecord.record) {
         return null;
@@ -20,26 +31,33 @@ export const buildRedoSubRecord = (subRecord, gameState, history) => {
     const ss = gameState?.saveState;
     const renames = history?.renames;
 
+    /** @param {Array<{ before: unknown, after: unknown, [key: string]: unknown }> | undefined} arr */
     const swapBeforeAfter = (arr) =>
         Array.isArray(arr) ? arr.map((item) => ({ ...item, before: item.after, after: item.before })) : [];
 
     const snapshotRemovedLaneSections = (r.createdLaneSections || []).map((item) => {
         const liveId = resolveRenamed(renames?.laneSection, item.id);
-        const live = ss?.laneSections?.[liveId];
+        const live = ss?.laneSections?.[String(liveId)];
         if (!live || !live.points) {
             throw new Error(`Missing live laneSection ${liveId} for redo snapshot`);
         }
         return {
             id: item.id,
             links: item.links,
-            points: typeof live.points.withoutLocks === "function" ? live.points.withoutLocks() : live.points,
+            points: /** @type {{ coords?: unknown, withoutLocks?: () => unknown }} */ (
+                typeof live.points.withoutLocks === "function" ? live.points.withoutLocks() : live.points
+            ),
         };
     });
 
+    /**
+     * @param {Array<{ id: number | string, [key: string]: unknown }> | undefined} arr
+     * @param {Record<string, Record<string, unknown>> | undefined} dict
+     */
     const snapshotRemovedCrossables = (arr, dict) =>
         (arr || []).map((item) => {
             const liveId = resolveRenamed(renames?.crossable, item.id);
-            const live = dict?.[liveId];
+            const live = dict?.[String(liveId)];
             return live ? { ...live, id: item.id } : item;
         });
 
@@ -67,16 +85,26 @@ export const buildRedoSubRecord = (subRecord, gameState, history) => {
     };
 };
 
-export const createRedoController = () => {
+/** @param {TrafficityGameFacade} [gameFacade] */
+export const createRedoController = (gameFacade) => {
+    /** @type {Array<{ origEntry: TrafficityUndoEntry, redoSubRecords: TrafficityUndoSubRecord[], moneyDelta: number }>} */
     const redoStack = [];
+    /** @type {TrafficitySaveState | null} */
     let lastSaveState = null;
     let lastKnownEntriesLen = 0;
+    /** @type {TrafficityUndoModule | null} */
     let hookedModule = null;
+    /** @type {TrafficityGameState | null} */
+    let capturedGameState = null;
+    /** @type {Record<string, unknown> | null} */
+    let capturedUndoDeps = null;
+
+    const getGame = () => gameFacade || (typeof window !== "undefined" ? window.TrafficityMods?.game : null) || null;
 
     const readUndoApi = () => {
-        const m = getMods();
-        if (m && m.game && typeof m.game.getUndoApi === "function") {
-            return m.game.getUndoApi();
+        const g = getGame();
+        if (g && typeof g.getUndoApi === "function") {
+            return g.getUndoApi();
         }
         return {
             undoModule: null,
@@ -86,6 +114,7 @@ export const createRedoController = () => {
         };
     };
 
+    /** @param {TrafficityGameState | null | undefined} gameState */
     const getHistory = (gameState) => {
         const { undoHistory } = readUndoApi();
         if (!gameState || !gameState.saveState || !undoHistory || typeof undoHistory.getUndoHistory !== "function") {
@@ -94,6 +123,7 @@ export const createRedoController = () => {
         return undoHistory.getUndoHistory(gameState.saveState);
     };
 
+    /** @param {TrafficityGameState | null | undefined} gameState */
     const syncInvalidation = (gameState) => {
         if (!gameState || !gameState.saveState) return null;
         const history = getHistory(gameState);
@@ -114,28 +144,32 @@ export const createRedoController = () => {
         if (!mod || hookedModule === mod) {
             return hookedModule === mod && Boolean(mod);
         }
+        /** @type {((gameState: TrafficityGameState, deps: Record<string, unknown>) => string) | undefined} */
         let origUndo;
         try {
             origUndo = mod.undoLastAction;
         } catch {
-            // f5Ojv module bindings may still be in TDZ during synchronous init
+            // Undo module bindings may still be in TDZ during synchronous init
             return false;
         }
         if (typeof origUndo !== "function") {
             return false;
         }
+        const originalUndo = origUndo;
         Object.defineProperty(mod, "undoLastAction", {
             configurable: true,
             enumerable: true,
-            value: (gameState, deps) => {
-                globalThis.__trafficityGameState = gameState;
-                globalThis.__trafficityUndoDeps = deps;
+            value: (/** @type {TrafficityGameState} */ gameState, /** @type {Record<string, unknown>} */ deps) => {
+                capturedGameState = gameState;
+                capturedUndoDeps = deps;
                 const history = syncInvalidation(gameState);
                 const topEntry = history && history.entries.length > 0 ? history.entries[history.entries.length - 1] : null;
 
+                /** @type {TrafficityUndoSubRecord[] | null} */
                 let redoSubRecords = null;
                 if (topEntry && Array.isArray(topEntry.subRecords)) {
                     try {
+                        /** @type {TrafficityUndoSubRecord[]} */
                         const built = [];
                         for (const sub of topEntry.subRecords) {
                             const rSub = buildRedoSubRecord(sub, gameState, history);
@@ -151,7 +185,7 @@ export const createRedoController = () => {
                     }
                 }
 
-                const result = origUndo(gameState, deps);
+                const result = originalUndo(gameState, deps);
                 if (result === "undone" && topEntry && history) {
                     if (redoSubRecords) {
                         redoStack.push({
@@ -169,9 +203,13 @@ export const createRedoController = () => {
         return true;
     };
 
+    /** @returns {"unavailable" | "busy" | "nothing" | "redone" | "failed"} */
     const redo = () => {
         installUndoHook();
-        const { undoModule: mod, gameState, undoDeps: deps } = readUndoApi();
+        const api = readUndoApi();
+        const mod = api.undoModule;
+        const gameState = api.gameState || capturedGameState;
+        const deps = api.undoDeps || capturedUndoDeps;
         if (!gameState || !deps || !mod || typeof mod.applyUndoSubRecord !== "function") {
             return "unavailable";
         }
@@ -184,18 +222,19 @@ export const createRedoController = () => {
         }
 
         const item = redoStack.pop();
+        if (!item) return "nothing";
         try {
             for (const inv of item.redoSubRecords) {
                 mod.applyUndoSubRecord(gameState, history, inv, deps);
             }
             history.entries.push(item.origEntry);
             lastKnownEntriesLen = history.entries.length;
-            if (typeof item.moneyDelta === "number" && item.moneyDelta !== 0) {
+            if (typeof item.moneyDelta === "number" && item.moneyDelta !== 0 && gameState.saveState) {
                 gameState.saveState.money += item.moneyDelta;
             }
-            const m = getMods();
-            if (m && m.game && typeof m.game.playSfx === "function") {
-                m.game.playSfx("placeRoad");
+            const g = getGame();
+            if (g && typeof g.playSfx === "function") {
+                g.playSfx("placeRoad");
             }
             if (typeof gameState.requestUiRefresh === "function") {
                 gameState.requestUiRefresh();
@@ -218,17 +257,14 @@ export const createRedoController = () => {
     };
 };
 
-const mods = getMods();
-if (mods) {
-    const controller = createRedoController();
-    if (!controller.installUndoHook()) {
-        if (mods.game && typeof mods.game.on === "function") {
-            mods.game.on("ready", () => controller.installUndoHook());
-        } else {
-            const onReady = () => controller.installUndoHook();
-            window.addEventListener("trafficity:undo-ready", onReady);
-            window.addEventListener("load", onReady, { once: true });
-        }
+/**
+ * @param {TrafficityModsApi} mods
+ * @param {TrafficityGameFacade} game
+ */
+export default function setupRedoMod(mods, game) {
+    const controller = createRedoController(game);
+    if (!controller.installUndoHook() && game && typeof game.on === "function") {
+        game.on("ready", () => { controller.installUndoHook(); });
     }
 
     mods.provide("redo", {
@@ -237,6 +273,6 @@ if (mods) {
         clear: controller.clear,
     });
 
-    mods.bindKey("Ctrl+y", () => controller.redo());
-    mods.bindKey("Ctrl+Shift+z", () => controller.redo());
+    mods.bindKey("Ctrl+y", () => { controller.redo(); });
+    mods.bindKey("Ctrl+Shift+z", () => { controller.redo(); });
 }
