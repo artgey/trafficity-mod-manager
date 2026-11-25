@@ -85,6 +85,7 @@ public:
     Q_INVOKABLE void runHealthCheck();
     Q_INVOKABLE void applyHealthFix(const QString &fixAction);
     Q_INVOKABLE void openModsFolder();
+    Q_INVOKABLE void openLogsFolder();
     Q_INVOKABLE void openApiDocs();
     Q_INVOKABLE void openModdingGuide();
     Q_INVOKABLE void openGame();
@@ -114,7 +115,7 @@ private:
     QString m_gameDir;
     QString m_modsDir;
     QString m_gameRelease;
-    QString m_modloaderVersion = QStringLiteral("1.4.1");
+    QString m_modloaderVersion = QStringLiteral("1.4.2");
     QString m_statusText = QStringLiteral("Checking...");
     bool m_isPatched = false;
     bool m_isFound = false;

@@ -11,7 +11,20 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    name: Typecheck & Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npm test
+
   package-mods:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +44,7 @@ jobs:
           path: dist-zips/*.zip
 
   build-linux:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +63,7 @@ jobs:
         run: |
           npm ci --omit=dev
           npm run build:ui
+          QT_QPA_PLATFORM=offscreen npm run test:ui
 
       - name: Stage portable Linux bundle
         run: |
@@ -74,6 +89,7 @@ jobs:
             trafficity-mod-manager-linux-x64.zip
 
   build-windows:
+    needs: verify
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

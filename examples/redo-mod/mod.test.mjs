@@ -79,50 +79,44 @@ test("redo-mod snapshots live laneSections, plays placeRoad sfx via game facade,
         applied.push(sub);
     };
 
-    globalThis.window = {
-        TrafficityMods: {
-            provide: (name, api) => services.set(name, api),
-            bindKey: (combo, handler) => bindings.set(combo, handler),
-            game: {
-                getUndoApi: () => ({
-                    undoModule: undoMod,
-                    undoHistory,
-                    gameState: globalThis.__trafficityGameState || gameState,
-                    undoDeps: globalThis.__trafficityUndoDeps || { dep: true },
-                }),
-                playSfx: (name) => sfxPlayed.push(name),
-            },
-        },
-        addEventListener() {},
+    const mockGame = {
+        on: () => () => {},
+        getUndoApi: () => ({
+            undoModule: undoMod,
+            undoHistory,
+            gameState,
+            undoDeps: { dep: true },
+        }),
+        playSfx: (name) => sfxPlayed.push(name),
+    };
+    const mockMods = {
+        provide: (name, api) => services.set(name, api),
+        bindKey: (combo, handler) => bindings.set(combo, handler),
+        game: mockGame,
     };
 
-    try {
-        const { buildRedoSubRecord } = await import(`./mod.js?t=${Date.now()}`);
-        const redoSvc = services.get("redo");
-        assert.ok(redoSvc);
-        assert.equal(redoSvc.canRedo(), false);
-        assert.equal(bindings.has("Ctrl+y"), true);
+    const { default: setupRedoMod, buildRedoSubRecord } = await import(`./mod.js?t=${Date.now()}`);
+    setupRedoMod(mockMods, mockGame);
+    const redoSvc = services.get("redo");
+    assert.ok(redoSvc);
+    assert.equal(redoSvc.canRedo(), false);
+    assert.equal(bindings.has("Ctrl+y"), true);
 
-        // Perform undo via hooked module
-        assert.equal(undoMod.undoLastAction(gameState, { dep: true }), "undone");
-        assert.equal(history.entries.length, 0);
-        assert.equal(redoSvc.canRedo(), true);
+    // Perform undo via hooked module
+    assert.equal(undoMod.undoLastAction(gameState, { dep: true }), "undone");
+    assert.equal(history.entries.length, 0);
+    assert.equal(redoSvc.canRedo(), true);
 
-        // Perform redo
-        assert.equal(redoSvc.redo(), "redone");
-        assert.equal(redoSvc.canRedo(), false);
-        assert.equal(history.entries.length, 1);
-        assert.equal(gameState.saveState.money, 900);
-        assert.deepEqual(sfxPlayed, ["placeRoad"]);
-        assert.equal(applied.length, 1);
-        assert.equal(applied[0].record.removedLaneSections[0].points.unlocked, true);
-        assert.deepEqual(applied[0].record.createdJunctions, [{ id: "j1" }]);
-        assert.deepEqual(applied[0].record.changedLaneSections, [{ id: "ls2", before: { a: 2 }, after: { a: 1 } }]);
+    // Perform redo
+    assert.equal(redoSvc.redo(), "redone");
+    assert.equal(redoSvc.canRedo(), false);
+    assert.equal(history.entries.length, 1);
+    assert.equal(gameState.saveState.money, 900);
+    assert.deepEqual(sfxPlayed, ["placeRoad"]);
+    assert.equal(applied.length, 1);
+    assert.equal(applied[0].record.removedLaneSections[0].points.unlocked, true);
+    assert.deepEqual(applied[0].record.createdJunctions, [{ id: "j1" }]);
+    assert.deepEqual(applied[0].record.changedLaneSections, [{ id: "ls2", before: { a: 2 }, after: { a: 1 } }]);
 
-        assert.equal(buildRedoSubRecord({ kind: "buildings placed" }, gameState, history), null);
-    } finally {
-        delete globalThis.window;
-        delete globalThis.__trafficityGameState;
-        delete globalThis.__trafficityUndoDeps;
-    }
+    assert.equal(buildRedoSubRecord({ kind: "buildings placed" }, gameState, history), null);
 });

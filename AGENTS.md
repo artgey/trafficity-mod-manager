@@ -96,6 +96,7 @@ This file documents the observed architecture of **Trafficity** (Steam App ID `5
 - **Build `26765575` (`b15972261c`):** Added buildings facing/interacting with junction mouths (`5Maft`, `Ql8Cr`, `803W5`, `d1gNk`, `ipWDw`, `hBiFw`, `6l6Hv`), `placement.road.trafficLightsInFrontOfBuilding` (`1gskn` / `4aR6e`), and renderer Crashpad memory annotations (`preload.js` `setCrashAnnotation`, `lDHat`).
 - **Build `26770952` (`5a84bc8003`):** Added `electron/renderer-freeze-watch.js` (unresponsive/GPU frame-stall watch with synchronous Steam overlay fallback via `store.js` `disableSteamOverlaySettingSync` and a 2 s rAF probe in `preload.js`) and glue-along/road-split module `aebgq` (`Router.cd259386.js`). All 9/9 hardened regex hooks passed with zero code changes.
 - **Build `34b3cf6d3f` (`trafficity@1.0.0+34b3cf6d3f`, `Router.89d029ab.js`):** Added `electron/steam-overlay-gpu-fallback.js` (Steam overlay `--in-process-gpu` WARP fallback when ANGLE/D3D11 init fails, preventing loading-screen WebGL hangs). All 9/9 hardened regex hooks passed with zero code changes.
+- **Build `6969441617` (`trafficity@1.0.0+6969441617`, `Router.8fc9524d.js`):** Updated simulation/pathfinding/keep-clear modules (`23yKB`, `3ma0f`, `ipWDw`, `jr3rt`, `32ZRr`, `fldJX`, `3rH81`, `1Lwfl`, `kPe38`, `4rdeQ`, workers `car-worker.28a3b082.js`, `happiness-worker.c64b5b7b.js`, `pathfinding-worker.b3556765.js`) and added `8Cnjy` (`createResidentCar`) + `j3N6S` (`logTrafficEraserSend`, `getRecentTrafficEraserSends`). All 9/9 hardened regex hooks and all loader/worker Parcel module IDs passed with zero code changes.
 - **Rule:** Never hardcode single-letter minified variable names in `patchRouterSource`. Use regex captures (`$1`, `$2`, ...) and run `verifyRouterHooks` after patching so missing hooks fail fast on future game updates.
 
 ---
@@ -117,7 +118,24 @@ This file documents the observed architecture of **Trafficity** (Steam App ID `5
 - **`src/patch.mjs`:** Idempotent ASAR patcher (`npm run patch` / `npm run restore`). Always calls `asar.uncache(asarPath)` before extracting and after repacking/restoring, writes to `${asarPath}.tmp` before renaming, cleans up `${tempAsar}.unpacked`, refreshes `app.asar.bak` whenever patching an unpatched stock `app.asar`, copies `src/mod-api.cjs`, `src/toml.cjs`, and `runtime/loader.js`, and verifies all `REQUIRED_ROUTER_HOOKS` via `verifyRouterHooks`.
 - **`src/mod-api.cjs` & `src/toml.cjs`:** Resolves `mods/` next to `saves/` (`AppData/Roaming/Trafficity/mods` or `TRAFFICITY_MODS_DIR`), reads/writes per-mod `settings.toml` (falling back to `mods-config.json`), exposes `gameRelease`, `forkedFrom`/`lineage`, and sets COOP/COEP/CORP isolation headers on every response.
 - **`src/registry.mjs`, `src/mod-tools.mjs`, & `src/health.mjs`:** Pure-Node ZIP installer/packager, `registry.json` fetcher with local fallback, mod scaffolding (`scaffoldMod`), forking (`forkMod` with `forkedFrom`/`lineage`), `.tmod-origin.json` unedited-mod hash tracking, LSP workspace type provisioning (`jsconfig.json` + `.tmod-types/trafficity-mods.d.ts`), and environment/mod health check (`npm run health`).
-- **`runtime/loader.js` & `types/trafficity-mods.d.ts`:** Loaded synchronously before `/transit-city-game.*.js`, resolves dependencies topologically, loads mods sequentially via `await import(...)` (invoking `export default` when present), exposes `window.TrafficityMods` + `game.on(...)` / `worldToScreen` / `screenToWorld` / `configureSnapSearch`, isolates overlay pointer events, and mounts the `F9` Mod Manager UI with inline `settings.toml` controls.
+- **`runtime/loader.js` & `types/trafficity-mods.d.ts`:** Loaded synchronously before `/transit-city-game.*.js`, resolves dependencies topologically, loads mods sequentially via `await import(...)` (invoking `export default` when present), exposes `window.TrafficityMods` (`buildings.register` / `CustomBuilding` for main-thread + worker custom buildings, `game.on(...)`, `worldToScreen` / `screenToWorld` / `configureSnapSearch`), isolates overlay pointer events, and mounts the `F9` Mod Manager UI with inline `settings.toml` controls.
 - **`docs/api.html` & `MODDING.md`:** Standalone HTML API reference (no emojis, no external dependencies) and mod-authoring guide.
 - **Tests:** Run `npm test` (`tsc -p jsconfig.json --noEmit` + `node --test test/*.test.mjs examples/*/*.test.mjs`) and `npm run test:ui` (`./bin/trafficity-mod-manager --self-test`).
 - **Game Keybindings Reference:** See [`GAME_BINDINGS.md`](GAME_BINDINGS.md).
+
+## Live Inspection Command Map (`dev-bridge`)
+
+When `dev-bridge` is enabled in the running game, prefer `npm run dev-console` / `npm run dev-eval` (or the `npm run mcp` server) instead of asking the user to copy/paste snippets into DevTools:
+
+- **Tail live game/mod console logs:**
+  - `npm run dev-console -- --tail 50` (recent lines) or `npm run dev-console -- --follow` (stream)
+- **Read passive disk & crash logs (`mods/logs/`, works even after a crash or with `dev-bridge` off):**
+  - `npm run logs -- --tail 80` (`latest.log`) or `npm run logs -- --crashes` (latest `crash-*.log` snapshot)
+- **Camera & world-space cursor coordinates:**
+  - `npm run dev-eval "game.getCameraState()"` (also shows `cursorWorldX` / `cursorWorldY` if present or combine with mouse hit-testing)
+- **Building under cursor / selected building & exact satisfaction:**
+  - `npm run dev-eval "(() => { const gs = game.getGameState(); const id = gs?.selectedBuildingId ?? Object.values(gs?.saveState?.buildings || {})[0]?.id; return id ? { id, satisfaction: game.getBuildingSatisfaction(id) } : null; })()"`
+- **Sample `pollutionGrid` around a building (e.g. `eco-scrubber`):**
+  - `npm run dev-eval "(() => { const gs = game.getGameState(); const g = gs.saveState.pollutionGrid; const s = Object.values(gs.saveState.buildings).find(b => b.type === 'eco-scrubber'); if (!s) return null; const cx = Math.floor(s.footprint.centerX / 80), cy = Math.floor(s.footprint.centerY / 80), w = g.getGridWidth(); return { cell: [cx, cy], value: g.pollutionValues[cy * w + cx] }; })()"`
+- **Inspect Router modules (`game.MODULES`) without hardcoding hashes:**
+  - `npm run dev-eval "Object.fromEntries(Object.entries(game.MODULES).map(([k, v]) => [k, Object.keys(game.requireModule(k) || {})]))"`

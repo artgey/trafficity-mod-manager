@@ -254,7 +254,7 @@
   <div class="layout">
     <aside>
       <div class="brand">Trafficity Mod Manager</div>
-      <div class="subtitle">API Reference v1.3.0 (Build 26770952)</div>
+      <div class="subtitle">API Reference v1.4.2</div>
       <nav>
         <div class="nav-group">Getting Started</div>
         <ul>
@@ -448,9 +448,9 @@ mods.use("redo")?.redo();</code></pre>
       </div>
 
       <div class="method-card">
-        <div class="method-sig">TrafficityMods.addOverlay(id, htmlOrNode)</div>
+        <div class="method-sig">TrafficityMods.addOverlay(id, htmlOrNode) -&gt; HTMLDivElement | null</div>
         <p>
-          Mounts or updates a persistent <code>&lt;div id="tmod-overlay-&lt;id&gt;"&gt;</code> element in <code>document.body</code>.
+          Mounts or updates a persistent <code>&lt;div id="tmod-overlay-&lt;id&gt;"&gt;</code> element in <code>document.body</code> with automatic mouse/wheel event isolation. Returns the host element when mounted synchronously (or <code>null</code> if deferred until <code>DOMContentLoaded</code>).
         </p>
       </div>
 
@@ -458,6 +458,13 @@ mods.use("redo")?.redo();</code></pre>
         <div class="method-sig">TrafficityMods.getMods() / TrafficityMods.getModsDir()</div>
         <p>
           Returns a shallow copy of the discovered mod manifest list and the resolved mods directory path.
+        </p>
+      </div>
+
+      <div class="method-card">
+        <div class="method-sig">TrafficityMods.buildings.register(configOrInstance)</div>
+        <p>
+          Registers a custom building type (<code>CustomBuilding</code>) into Trafficity's main-thread building/simulation/UI modules and isolated Web Workers, with support for procedural 2.5D <code>getExtrusions</code>, quotas, and <code>onPlace</code>/<code>onDelete</code>/<code>onSelect</code>/<code>onRenderWorld</code> hooks. Also exposes <code>CustomBuilding</code>, <code>get(type)</code>, and <code>list()</code>.
         </p>
       </div>
 
@@ -533,6 +540,11 @@ mods.use("redo")?.redo();</code></pre>
             <td><code>game.getCursorMode()</code></td>
             <td><code>string | null</code></td>
             <td>Returns Trafficity's active <code>gameState.cursorMode.mode</code> (e.g. <code>"default"</code>, <code>"road placement"</code>, <code>"grid"</code>, <code>"rectangle delete"</code>, <code>"traffic eraser"</code>, <code>"place roundabout"</code>, <code>"building placement"</code>).</td>
+          </tr>
+          <tr>
+            <td><code>game.getCursorState()</code></td>
+            <td><code>TrafficityCursorState | null</code></td>
+            <td>Returns the full active <code>gameState.cursorMode</code> object (including <code>mode</code>, <code>startPoint</code>, <code>firstPoint</code>, <code>buildingDefinitionName</code>).</td>
           </tr>
           <tr>
             <td><code>game.isIdle()</code></td>
@@ -631,9 +643,191 @@ mods.use("redo")?.redo();</code></pre>
             <td>Provides Router module <code>aYVZj</code> (<code>getNearestLaneCreationPoint</code>, <code>getLaneCreationPointCandidates</code>).</td>
           </tr>
           <tr>
+            <td><code>game.getZoomAwareStrokeWidth(zoom?)</code></td>
+            <td><code>number</code></td>
+            <td>Returns Trafficity's zoom-compensated world-overlay stroke width.</td>
+          </tr>
+          <tr>
+            <td><code>game.createDashedCircle(cx, cy, radius, options?)</code></td>
+            <td><code>PIXI.Graphics | null</code></td>
+            <td>Builds a dashed PixiJS circle graphic matching Trafficity's native radius rings (<code>{ color, alpha, strokeWidth, dashLength, gapLength }</code>).</td>
+          </tr>
+          <tr>
+            <td><code>game.getBuildingDefinition(type)</code> / <code>game.getPollutionConfig()</code></td>
+            <td><code>object | null</code> / <code>{ cellSize }</code></td>
+            <td>Looks up any building definition by slug or reads the pollution grid cell size (<code>40</code>).</td>
+          </tr>
+          <tr>
+            <td><code>game.setSelectionRadiusRing(buildingType, options)</code></td>
+            <td><code>void</code></td>
+            <td>Shows a colored dashed radius ring (<code>{ radius, color, alpha }</code>) whenever a building of <code>buildingType</code> is selected.</td>
+          </tr>
+          <tr>
+            <td><code>game.addBuildingTooltipLine(buildingType, textOrFn, style?)</code></td>
+            <td><code>void</code></td>
+            <td>Appends a custom description line to the toolbar hover tooltip for <code>buildingType</code>.</td>
+          </tr>
+          <tr>
+            <td><code>game.onPollutionDiffusion(handler)</code></td>
+            <td><code>() =&gt; void</code></td>
+            <td>Runs <code>handler(pollutionGrid, { saveState, cellSize, getBuildingDefinition })</code> after each pollution diffusion step.</td>
+          </tr>
+          <tr>
+            <td><code>game.hookRoadSnap(factory)</code></td>
+            <td><code>() =&gt; void</code></td>
+            <td>Wraps road snapping (<code>getNearestLaneCreationPoint</code>) with a composable multi-mod wrapper factory. Returns an unsubscribe function.</td>
+          </tr>
+          <tr>
+            <td><code>game.hookRoundaboutPlacement(factory)</code> / <code>game.hookRoadPlacement(factory)</code></td>
+            <td><code>() =&gt; void</code></td>
+            <td>Wraps roundabout or road placement evaluation with composable multi-mod wrapper factories. Returns an unsubscribe function.</td>
+          </tr>
+          <tr>
+            <td><code>game.requireModule(nameOrId)</code></td>
+            <td><code>TrafficityModuleMap[K] | null</code></td>
+            <td>Resolves a typed internal Trafficity module using a human-readable key from <code>game.MODULES</code> (e.g. <code>"CAMERA"</code>), or falls back to a raw Parcel ID.</td>
+          </tr>
+          <tr>
             <td><code>game.requireRouterModule(id)</code></td>
             <td><code>object | null</code></td>
-            <td>Resolves any exported Parcel module by ID from <code>Router.*.js</code> via <code>__trafficityRouterRequire</code>.</td>
+            <td>Low-level helper to resolve any exported Parcel module by raw ID from <code>Router.*.js</code> via <code>__trafficityRouterRequire</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 id="modules">Official Module Registry (<code>game.MODULES</code>)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Parcel ID</th>
+            <th>Domain &amp; Primary Exports</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>BUILDING_DEFINITIONS</code></td><td><code>4nkf2</code></td><td><code>BUILDING_DEFINITIONS</code>, <code>getBuildingDefinition</code>, <code>getBuildingDefaultColor</code></td></tr>
+          <tr><td><code>BUILDING_DISPLAY_NAMES</code></td><td><code>aUbb1</code></td><td><code>buildingDisplayName</code>, <code>roadDisplayName</code>, <code>resourceDisplayName</code>, <code>terrainDisplayName</code></td></tr>
+          <tr><td><code>BUILDING_VEHICLE_SPECS</code></td><td><code>fFJcz</code></td><td><code>getBuildingCarCountSpec</code>, <code>getResidentCarCountForResidentialBuildingType</code></td></tr>
+          <tr><td><code>BUILDING_VISITED_NEEDS</code></td><td><code>jnB0a</code></td><td><code>buildingHasGetVisitedNeed</code></td></tr>
+          <tr><td><code>BUILDING_SATISFACTION_WEIGHTS</code></td><td><code>2cbpn</code></td><td><code>getSatisfactionWeightForBuildingType</code></td></tr>
+          <tr><td><code>BUILDING_PLACEMENT</code> / <code>BUILDING_DELETION</code></td><td><code>6whda</code> / <code>gh1Od</code></td><td><code>placeBuildingsFromFootprints</code>, <code>restoreBuildingsAtFootprints</code>, <code>deleteBuildingsFromGameState</code></td></tr>
+          <tr><td><code>BUILDING_GRAPHICS</code> / <code>BUILDING_PREVIEW_UI</code> / <code>BUILDING_TOOLTIP_UI</code> / <code>BUILDING_VIEW_PANEL_UI</code></td><td><code>XfMqf</code> / <code>iPOHp</code> / <code>eAKuV</code> / <code>aelWA</code></td><td><code>createBuildingGraphicsParts</code>, <code>updateBuildingGraphics</code>, <code>BuildingPreview</code>, <code>BuildingTypeTooltip</code>, <code>BuildingViewPanel</code></td></tr>
+          <tr><td><code>ROAD_CONSTANTS</code> / <code>ROAD_SNAP</code> / <code>ROAD_PLACEMENT</code> / <code>ROAD_CONSTRUCTION</code> / <code>ROUNDABOUT_PLACEMENT</code></td><td><code>bTgKI</code> / <code>aYVZj</code> / <code>hkRbw</code> / <code>h0N8S</code> / <code>8lnVn</code></td><td><code>LANE_WIDTH</code>, <code>getNearestLaneCreationPoint</code>, <code>getRoadConstructionActionWithPlacement</code>, <code>getPlaceRoundaboutResultForSize</code></td></tr>
+          <tr><td><code>POLLUTION_FROM_BUILDINGS</code> / <code>POLLUTION_GRID</code> / <code>POLLUTION_DIFFUSION</code> / <code>POLLUTION_RADIUS_UI</code></td><td><code>5x7Vi</code> / <code>d9GJQ</code> / <code>gs8fX</code> / <code>eqevD</code></td><td><code>updatePollutionFromBuildings</code>, <code>POLLUTION_CELL_SIZE</code>, <code>updatePollutionDiffusion</code>, <code>setBuildingPollutionRadiusSelectionGraphic</code></td></tr>
+          <tr><td><code>LEVEL_PROGRESSION</code> / <code>SCENARIOS</code> / <code>DIFFICULTY_MODES</code></td><td><code>aigC5</code> / <code>a3oY4</code> / <code>9colC</code></td><td><code>setPendingDevelopmentPackUnlockIfEligible</code>, <code>claimPendingDevelopmentPackUnlock</code>, <code>SCENARIOS</code>, <code>scaleBudgetForDifficulty</code></td></tr>
+          <tr><td><code>CAMERA</code> / <code>UI_SFX</code> / <code>SOUND_LIBRARY</code> / <code>MUSIC_CONTROLLER</code> / <code>I18N</code></td><td><code>cghJ1</code> / <code>lVhdV</code> / <code>8thuK</code> / <code>1JlYf</code> / <code>9nNmt</code></td><td><code>getZoomAwareStrokeWidth</code>, <code>playUiSfx</code>, <code>sound</code>, <code>createGameMusicController</code>, <code>t</code></td></tr>
+          <tr><td><code>PIXI_CONTAINER</code> / <code>PIXI_GRAPHICS</code> / <code>PIXI_SPRITE</code> / <code>PIXI_TEXTURE</code> / <code>PIXI_CANVAS_SOURCE</code> / <code>REACT_JSX</code></td><td><code>eicwU</code> / <code>3cebA</code> / <code>4rhnu</code> / <code>bLlTJ</code> / <code>8xl7d</code> / <code>ayMG0</code></td><td>PixiJS v8 rendering primitives and React JSX factory (<code>jsx</code>, <code>jsxs</code>)</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="buildings">Custom Buildings: <code>window.TrafficityMods.buildings</code></h2>
+      <p>
+        Registers new building types across Trafficity's main-thread Parcel modules and isolated simulation Web Workers
+        (<code>car-worker</code>, <code>happiness-worker</code>, <code>pathfinding-worker</code>). Call
+        <code>register()</code> during mod setup before a map loads so worker hooks inject cleanly.
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Member</th>
+            <th>Returns</th>
+            <th>Behavior</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>buildings.CustomBuilding</code></td>
+            <td><code>Class</code></td>
+            <td>Validated class wrapping a custom building definition, <code>toWorkerSafeDefinition()</code>, <code>toMainDefinition()</code>, <code>getDisplayName(lang)</code>, and <code>getTotalVehicleCount()</code>.</td>
+          </tr>
+          <tr>
+            <td><code>buildings.register(configOrInstance)</code></td>
+            <td><code>TrafficityCustomBuilding</code></td>
+            <td>Validates and registers a <code>CustomBuilding</code> into main-thread building/UI/simulation tables and worker shims.</td>
+          </tr>
+          <tr>
+            <td><code>buildings.get(type)</code></td>
+            <td><code>TrafficityCustomBuilding | null</code></td>
+            <td>Returns the registered custom building matching <code>type</code>, or <code>null</code>.</td>
+          </tr>
+          <tr>
+            <td><code>buildings.list()</code></td>
+            <td><code>TrafficityCustomBuilding[]</code></td>
+            <td>Returns an array of all registered custom buildings.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3><code>TrafficityCustomBuildingConfig</code> Options</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Type / Allowed Values</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>type</code></td>
+            <td><code>string</code> (required)</td>
+            <td>Unique slug ID (e.g. <code>"my-mod:cafe"</code>) stored in saves and worker tables.</td>
+          </tr>
+          <tr>
+            <td><code>buildingCategory</code></td>
+            <td><code>"residential" | "commercial" | "office" | "industrial"</code></td>
+            <td>Controls simulation role, <code>BuildingViewPanel</code> layout, and satisfaction category.</td>
+          </tr>
+          <tr>
+            <td><code>name</code> / <code>localizedNames</code></td>
+            <td><code>string</code> / <code>Record&lt;string, string&gt;</code></td>
+            <td>Display name and optional per-language overrides (<code>en</code>, <code>fr</code>, <code>de</code>, <code>es</code>, <code>ru</code>, <code>ptbr</code>, <code>zhs</code>, <code>ja</code>, <code>ko</code>).</td>
+          </tr>
+          <tr>
+            <td><code>width</code> / <code>depth</code></td>
+            <td><code>number</code> (default <code>110</code> / <code>90</code>)</td>
+            <td>Plot frontage width and depth in world units.</td>
+          </tr>
+          <tr>
+            <td><code>buildingColors</code></td>
+            <td><code>string[]</code></td>
+            <td>Hex palette; index <code>0</code> is primary color and <code>extrusion.colorIndex</code> selects secondary colors.</td>
+          </tr>
+          <tr>
+            <td><code>parkingSpaces</code> / <code>garage</code></td>
+            <td><code>number[]</code> / <code>{ entrance, exit, effectiveCapacity }</code></td>
+            <td>Mutually exclusive frontage X-offsets for outdoor stalls vs. internal garage entrance/exit.</td>
+          </tr>
+          <tr>
+            <td><code>pollutionOutput</code> / <code>pollutionAffectsHappiness</code></td>
+            <td><code>"none" | "low" | "medium" | "high"</code> / <code>boolean</code></td>
+            <td>Static pollution emitted (<code>0 / 0.55 / 0.65 / 0.75</code>) and whether air quality affects happiness.</td>
+          </tr>
+          <tr>
+            <td><code>inputs</code> / <code>outputs</code> / <code>vanCapacity</code> / <code>truckCapacity</code></td>
+            <td><code>"food" | "copper" | "iron" | "steel" | "cpg"</code></td>
+            <td>Cargo resources produced/consumed and simultaneous delivery vehicle receiver slots.</td>
+          </tr>
+          <tr>
+            <td><code>requiredTerrain</code> / <code>forbiddenTerrain</code> / <code>mineTerrain</code></td>
+            <td><code>"water" | "land" | "mountain" | "void" | "sand" | "grass" | "wasteland" | "deepwasteland"</code></td>
+            <td>Terrain placement constraints (<code>mineTerrain</code> accepts <code>"mountain" | "water"</code>).</td>
+          </tr>
+          <tr>
+            <td><code>getExtrusions(w, d, building)</code></td>
+            <td><code>(w, d, b) =&gt; Extrusion[]</code></td>
+            <td>Returns procedural 2.5D polygon roofs/heights for world meshes, shadows, and toolbar SVG previews.</td>
+          </tr>
+          <tr>
+            <td><code>vehicles</code> / <code>needsVisited</code> / <code>satisfactionWeight</code> / <code>defaultQuota</code></td>
+            <td><code>{ cars } | { trucks } | { vans }</code> / <code>boolean</code> / <code>number</code></td>
+            <td>Owned resident/cargo vehicles, visitor demand tracking, satisfaction weight, and initial toolbar quota.</td>
+          </tr>
+          <tr>
+            <td><code>onPlace</code> / <code>onDelete</code> / <code>onSelect</code> / <code>onRenderWorld</code></td>
+            <td>Lifecycle callbacks</td>
+            <td>Invoked on building placement/undo, demolition, world selection click, and PixiJS mesh creation/update.</td>
           </tr>
         </tbody>
       </table>

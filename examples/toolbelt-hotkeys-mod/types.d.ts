@@ -1,8 +1,5 @@
 export {};
 
-declare global {
-    interface TrafficityGameFacade {
-        /** Attach or update a numbered corner badge (`.tmod-slot-badge`) on a toolbelt slot button. */
-        addSlotBadge(slotBtn: Element, label: string | number): void;
-    }
-}
+// Core game facade methods (including `addSlotBadge` and `getCursorState`) are
+// declared in `types/trafficity-mods.d.ts`. Add any toolbelt-hotkeys-specific
+// `TrafficityServices` or `TrafficityGameFacade` augmentations here.

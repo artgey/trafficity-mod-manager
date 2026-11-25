@@ -75,6 +75,7 @@ const DEFAULT_ASAR_PATH = resolveDefaultAsarPath();
 
 const MARKER = "/* TRAFFICITY_MOD_MANAGER_PATCH */";
 
+/** @param {string} source */
 export const patchStaticServerSource = (source) => {
     if (source.includes(MARKER)) {
         return source;
@@ -113,6 +114,7 @@ export const patchStaticServerSource = (source) => {
     return out;
 };
 
+/** @param {string} source */
 export const patchPreloadSource = (source) => {
     if (source.includes(MARKER)) {
         return source;
@@ -133,6 +135,7 @@ export const patchPreloadSource = (source) => {
     return source.slice(0, closeIdx) + insertion + source.slice(closeIdx + endAnchor.length);
 };
 
+/** @param {string} source */
 export const patchMainSource = (source) => {
     if (source.includes(MARKER)) {
         return source;
@@ -145,7 +148,8 @@ export const patchMainSource = (source) => {
     }
 
     const ipcBlock = `${MARKER}
-const { resolveModsDir } = require("./mod-api.cjs");
+const { resolveModsDir, installMainCrashHandlers } = require("./mod-api.cjs");
+installMainCrashHandlers({ app: typeof app !== "undefined" ? app : null, getPlayerSavesDir });
 const toWineHostPath = (winPath) => {
     if (/^[a-zA-Z]:[\\\\/]/.test(winPath)) {
         const drive = winPath[0].toLowerCase();
@@ -183,7 +187,11 @@ ipcMain.handle("open-mods-folder", async () => {
 });
 ipcMain.on("reload-game", () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.reloadIgnoringCache();
+        if (prodServer && prodServer.url) {
+            mainWindow.loadURL(prodServer.url + "/?t=" + Date.now());
+        } else {
+            mainWindow.webContents.reloadIgnoringCache();
+        }
     }
 });
 
@@ -191,6 +199,7 @@ ipcMain.on("reload-game", () => {
     return source.slice(0, idx) + ipcBlock + source.slice(idx);
 };
 
+/** @param {string} source */
 export const patchIndexHtmlSource = (source) => {
     if (source.includes("/mods-runtime/loader.js")) {
         return source;
@@ -216,8 +225,11 @@ export const REQUIRED_ROUTER_HOOKS = [
     ["snapLogGuard", "__trafficitySuppressSnapLog"],
 ];
 
+/** @param {string} source */
 export const verifyRouterHooks = (source) => {
+    /** @type {Record<string, boolean>} */
     const hooks = {};
+    /** @type {string[]} */
     const missing = [];
     for (const [name, needle] of REQUIRED_ROUTER_HOOKS) {
         const present = source.includes(needle);
@@ -227,6 +239,7 @@ export const verifyRouterHooks = (source) => {
     return { ok: missing.length === 0, missing, hooks };
 };
 
+/** @param {string} source */
 export const patchRouterSource = (source) => {
     if (source.includes(MARKER)) {
         return source;
@@ -332,6 +345,7 @@ export const patchRouterSource = (source) => {
     return out;
 };
 
+/** @param {string} extractedDir */
 export const applyPatchesToExtractedDir = async (extractedDir) => {
     const modApiSrc = path.join(PROJECT_ROOT, "src", "mod-api.cjs");
     const tomlSrc = path.join(PROJECT_ROOT, "src", "toml.cjs");
@@ -341,6 +355,7 @@ export const applyPatchesToExtractedDir = async (extractedDir) => {
     await fsp.copyFile(tomlSrc, path.join(extractedDir, "electron", "toml.cjs"));
     await fsp.copyFile(loaderSrc, path.join(extractedDir, "electron", "mod-loader.js"));
 
+    /** @type {Array<[string, (source: string) => string]>} */
     const targets = [
         ["electron/static-server.js", patchStaticServerSource],
         ["electron/preload.js", patchPreloadSource],
@@ -376,6 +391,7 @@ export const applyPatchesToExtractedDir = async (extractedDir) => {
     }
 };
 
+/** @param {string} asarPath */
 export const patchAsar = async (asarPath) => {
     if (!fs.existsSync(asarPath)) {
         throw new Error(`app.asar not found at: ${asarPath}`);
@@ -420,6 +436,7 @@ export const patchAsar = async (asarPath) => {
     }
 };
 
+/** @param {string} asarPath */
 export const restoreAsar = async (asarPath) => {
     const backupPath = `${asarPath}.bak`;
     if (!fs.existsSync(backupPath)) {
@@ -430,10 +447,12 @@ export const restoreAsar = async (asarPath) => {
     console.log(`Restored original app.asar from: ${backupPath}`);
 };
 
+/** @param {string} asarPath */
 export const inspectAsarStatus = (asarPath) => {
     const gameDir = path.resolve(path.dirname(asarPath), "..");
     const backupPath = `${asarPath}.bak`;
     const modsDir = resolveDefaultModsDir();
+    /** @type {{ found: boolean, asarPath: string, gameDir: string, backupExists: boolean, patched: boolean, gameRelease: string | null, routerFile: string | null, hooksOk: boolean, missingHooks: string[], modsDir: string, error?: string }} */
     const base = {
         found: fs.existsSync(asarPath),
         asarPath,
@@ -465,7 +484,7 @@ export const inspectAsarStatus = (asarPath) => {
             // ignore
         }
 
-        const files = asar.listPackage(asarPath);
+        const files = asar.listPackage(asarPath, { isPack: false });
         const routerEntry = files.find((f) => /^\/dist\/Router\..*\.js$/.test(f));
         if (routerEntry) {
             base.routerFile = routerEntry.slice(1);
@@ -475,12 +494,13 @@ export const inspectAsarStatus = (asarPath) => {
             base.missingHooks = check.missing;
         }
     } catch (err) {
-        base.error = err && err.message ? err.message : String(err);
+        base.error = err instanceof Error ? err.message : String(err);
     }
 
     return base;
 };
 
+/** @param {string[]} argv */
 const parseArgs = (argv) => {
     let asarPath = DEFAULT_ASAR_PATH;
     let restore = false;
@@ -510,5 +530,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         await restoreAsar(asarPath);
     } else {
         await patchAsar(asarPath);
+        if (process.env.TRAFFICITY_SKIP_EXAMPLE_SYNC !== "1") {
+            const { syncExampleMods } = await import("./registry.mjs");
+            const summary = await syncExampleMods({ modsDir: resolveDefaultModsDir() });
+            console.log(
+                `Synced examples (installed: ${summary.installed.length}, updated: ${summary.updated.length}, unchanged: ${summary.unchanged.length}, deduplicated: ${summary.deduplicated})`,
+            );
+        }
     }
 }

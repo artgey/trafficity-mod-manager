@@ -64,8 +64,11 @@ test("scaffoldMod, settings.toml round-trip, and packModZip work end-to-end", as
         assert.equal(fs.existsSync(path.join(res.dir, "style.css")), true);
         assert.equal(fs.existsSync(path.join(res.dir, "settings.toml")), true);
         assert.equal(fs.existsSync(path.join(res.dir, "types.d.ts")), true);
+        assert.equal(fs.existsSync(path.join(res.dir, "mod.test.mjs")), true);
         assert.equal(fs.existsSync(path.join(modsDir, "jsconfig.json")), true);
         assert.equal(fs.existsSync(path.join(modsDir, ".tmod-types", "trafficity-mods.d.ts")), true);
+        const provisionedJsConfig = JSON.parse(await fsp.readFile(path.join(modsDir, "jsconfig.json"), "utf8"));
+        assert.equal(provisionedJsConfig.compilerOptions.checkJs, true);
 
         // Save settings.toml via mod-tools
         await saveModSettings(res.dir, { showBanner: false, hotkeyLabel: "Custom" });
@@ -74,8 +77,7 @@ test("scaffoldMod, settings.toml round-trip, and packModZip work end-to-end", as
         assert.equal(loaded.values.showBanner, false);
         assert.equal(loaded.values.hotkeyLabel, "Custom");
 
-        // Add a test file that should be excluded from ZIP
-        await fsp.writeFile(path.join(res.dir, "mod.test.mjs"), "export {};\n");
+        // Starter mod.test.mjs is excluded from packed ZIP
         const packed = await packModZip(res.dir);
         assert.equal(fs.existsSync(packed.zipPath), true);
 

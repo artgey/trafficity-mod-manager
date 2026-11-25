@@ -1,0 +1,9 @@
+{
+  "id": "eco-scrubber",
+  "name": "Eco-Scrubber Air Purifier",
+  "version": "1.0.0",
+  "modloaderVersion": "1.4.2",
+  "author": "Trafficity Mod Manager",
+  "description": "Adds a custom Eco-Scrubber Tower building with 2.5D procedural extrusions that actively cleans nearby air pollution around its plot.",
+  "entry": "mod.js"
+}

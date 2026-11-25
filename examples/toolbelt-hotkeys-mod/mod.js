@@ -1,9 +1,15 @@
-const modApi = window.TrafficityMods;
+/** @param {TrafficityGameFacade} game */
+const isModalOrMenuOpen = (game) => {
+    const gs = typeof game.getGameState === "function" ? game.getGameState() : null;
+    return Boolean(gs && gs.isModalDialogOpen);
+};
 
+/** @param {EventTarget | null} target */
 const isUiEventTarget = (target) => {
-    if (!target || typeof target.closest !== "function") return false;
+    const el = /** @type {Element | null} */ (target);
+    if (!el || typeof el.closest !== "function") return false;
     return Boolean(
-        target.closest(
+        el.closest(
             '.toolbar-container, #trafficity-mod-manager-root, #tmod-measuring-grid-hud, [id^="tmod-overlay-"], .ui-wheel-scroll, button, input, textarea, select',
         ),
     );
@@ -14,7 +20,9 @@ const cycleGridDensity = () => {
     if (!controlPanel) return false;
     const firstRow = controlPanel.querySelector(".road-toolbar-control-row");
     if (!firstRow) return false;
-    const densityOptions = Array.from(firstRow.querySelectorAll("button.game-multi-button-option"));
+    const densityOptions = /** @type {HTMLButtonElement[]} */ (
+        Array.from(firstRow.querySelectorAll("button.game-multi-button-option"))
+    );
     if (densityOptions.length === 0) return false;
     const activeIndex = densityOptions.findIndex(
         (optionButton) =>
@@ -25,6 +33,7 @@ const cycleGridDensity = () => {
     return true;
 };
 
+/** @param {TrafficityGameFacade} game */
 const isRoadPlacementActive = (game) => {
     const cursorMode = game.getCursorMode();
     if (cursorMode === "road placement") return true;
@@ -40,13 +49,21 @@ const isRoadPlacementActive = (game) => {
     });
 };
 
-if (modApi && modApi.game) {
-    const { game } = modApi;
+/**
+ * @param {TrafficityModsApi} modApi
+ * @param {TrafficityGameFacade} game
+ */
+export default function setupToolbeltHotkeys(modApi, game) {
+    /** @type {Record<string, unknown>} */
     const modConfig = typeof modApi.getConfig === "function" ? modApi.getConfig("toolbelt-hotkeys") || {} : {};
-    const keyFor = (settingKey, fallback) =>
-        typeof modConfig[settingKey] === "string" && modConfig[settingKey].trim()
-            ? modConfig[settingKey].trim()
-            : fallback;
+    /**
+     * @param {string} settingKey
+     * @param {string} fallback
+     */
+    const keyFor = (settingKey, fallback) => {
+        const val = modConfig[settingKey];
+        return typeof val === "string" && val.trim() ? val.trim() : fallback;
+    };
 
     game.watchToolbelt((toolbeltSlots) => {
         toolbeltSlots.slice(0, 10).forEach((slotButton, slotIndex) => {
@@ -56,19 +73,29 @@ if (modApi && modApi.game) {
         game.addButtonHint("traffic-eraser", "⇧Del");
     });
 
+    /**
+     * @param {string} combo
+     * @param {(event: KeyboardEvent) => boolean | void} handler
+     */
+    const bindGameplayKey = (combo, handler) =>
+        modApi.bindKey(combo, (event) => {
+            if (isModalOrMenuOpen(game)) return false;
+            return handler(event);
+        });
+
     // Plan 7 / Toolbelt: 1-9 and 0 select toolbelt slots 1-10
     for (let slotIndex = 0; slotIndex < 10; slotIndex++) {
         const keyLabel = slotIndex === 9 ? "0" : String(slotIndex + 1);
-        modApi.bindKey(keyLabel, () => game.selectToolbeltSlot(slotIndex));
+        bindGameplayKey(keyLabel, () => game.selectToolbeltSlot(slotIndex));
     }
 
     // Speed rebinds: Alt+1 (Pause/Stop), Alt+2 (Normal), Alt+3 (Fast)
-    modApi.bindKey(keyFor("speedPause", "Alt+1"), () => game.setSpeed("pause"));
-    modApi.bindKey(keyFor("speedNormal", "Alt+2"), () => game.setSpeed("normal"));
-    modApi.bindKey(keyFor("speedFast", "Alt+3"), () => game.setSpeed("fast"));
+    bindGameplayKey(keyFor("speedPause", "Alt+1"), () => game.setSpeed("pause"));
+    bindGameplayKey(keyFor("speedNormal", "Alt+2"), () => game.setSpeed("normal"));
+    bindGameplayKey(keyFor("speedFast", "Alt+3"), () => game.setSpeed("fast"));
 
     // Plan 1: Q toggle deletion (default -> rectangle-delete -> traffic-eraser -> off), Shift+Del for traffic eraser
-    modApi.bindKey(keyFor("toggleDelete", "q"), () => {
+    bindGameplayKey(keyFor("toggleDelete", "q"), () => {
         if (game.isButtonSelected("rectangle-delete")) {
             game.pressButton("traffic-eraser");
         } else if (game.isButtonSelected("traffic-eraser")) {
@@ -77,19 +104,19 @@ if (modApi && modApi.game) {
             game.pressButton("rectangle-delete");
         }
     });
-    modApi.bindKey(keyFor("rectDelete", "Delete"), () => game.pressButton("rectangle-delete"));
-    modApi.bindKey("Backspace", () => game.pressButton("rectangle-delete"));
-    modApi.bindKey(keyFor("trafficEraser", "Shift+Delete"), () => game.pressButton("traffic-eraser"));
-    modApi.bindKey("Shift+Backspace", () => game.pressButton("traffic-eraser"));
+    bindGameplayKey(keyFor("rectDelete", "Delete"), () => game.pressButton("rectangle-delete"));
+    bindGameplayKey("Backspace", () => game.pressButton("rectangle-delete"));
+    bindGameplayKey(keyFor("trafficEraser", "Shift+Delete"), () => game.pressButton("traffic-eraser"));
+    bindGameplayKey("Shift+Backspace", () => game.pressButton("traffic-eraser"));
 
     // Mode shortcuts
-    modApi.bindKey(keyFor("gridMode", "g"), () => game.pressButton("grid"));
-    modApi.bindKey(keyFor("trafficLightsMode", "l"), () => game.pressButton("traffic-lights"));
-    modApi.bindKey(keyFor("roundaboutMode", "o"), () => game.pressButton("roundabout"));
-    modApi.bindKey(keyFor("keepClearMode", "k"), () => game.pressButton("keep-clear"));
+    bindGameplayKey(keyFor("gridMode", "g"), () => game.pressButton("grid"));
+    bindGameplayKey(keyFor("trafficLightsMode", "l"), () => game.pressButton("traffic-lights"));
+    bindGameplayKey(keyFor("roundaboutMode", "o"), () => game.pressButton("roundabout"));
+    bindGameplayKey(keyFor("keepClearMode", "k"), () => game.pressButton("keep-clear"));
 
     // Plan 3: Context-aware E property shift + guard when nothing relevant is selected
-    modApi.bindKey(keyFor("propertyShift", "e"), () => {
+    bindGameplayKey(keyFor("propertyShift", "e"), () => {
         if (game.isButtonSelected("grid")) {
             cycleGridDensity();
             return true;
@@ -106,8 +133,11 @@ if (modApi && modApi.game) {
 
     // Mouse interactions (Plans 2, 4, 5, 6, 7)
     if (typeof modApi.onMouse === "function") {
+        /** @type {{ startX: number, startY: number, active: boolean } | null} */
         let rightPanState = null;
+        /** @type {{ restoreOnUp: boolean } | null} */
         let shiftDeleteState = null;
+        /** @type {{ startX: number, startY: number, started: boolean } | null} */
         let dragPlaceState = null;
         let suppressNextContextMenu = false;
 
@@ -115,10 +145,12 @@ if (modApi && modApi.game) {
         modApi.onMouse(
             "wheel",
             (wheelEvent) => {
+                if (isModalOrMenuOpen(game)) return;
+                const el = /** @type {Element | null} */ (wheelEvent.target);
                 if (
-                    wheelEvent.target &&
-                    typeof wheelEvent.target.closest === "function" &&
-                    wheelEvent.target.closest(".ui-wheel-scroll, #trafficity-mod-manager-root")
+                    el &&
+                    typeof el.closest === "function" &&
+                    el.closest(".ui-wheel-scroll, #trafficity-mod-manager-root")
                 ) {
                     return;
                 }
@@ -142,6 +174,11 @@ if (modApi && modApi.game) {
         );
 
         modApi.onMouse("mousedown", (mouseEvent) => {
+            if (isModalOrMenuOpen(game)) {
+                rightPanState = null;
+                dragPlaceState = null;
+                return;
+            }
             // Plan 7: Mouse Back (button 3) -> Undo, Mouse Forward (button 4) -> Redo
             if (mouseEvent.button === 3) {
                 mouseEvent.preventDefault();
@@ -188,11 +225,11 @@ if (modApi && modApi.game) {
 
             // Plan 6: Left-Click Hold & Drop placement in road placement / grid modes
             if (mouseEvent.button === 0 && !mouseEvent.shiftKey) {
-                const gameState = typeof game.getUndoApi === "function" ? game.getUndoApi().gameState : null;
-                const cursorMode = game.getCursorMode();
+                const cursorState = typeof game.getCursorState === "function" ? game.getCursorState() : null;
+                const cursorMode = cursorState?.mode ?? game.getCursorMode();
                 const canDragPlace =
-                    (cursorMode === "road placement" && gameState?.cursorMode?.startPoint == null) ||
-                    (cursorMode === "grid" && gameState?.cursorMode?.firstPoint == null);
+                    (cursorMode === "road placement" && cursorState?.startPoint == null) ||
+                    (cursorMode === "grid" && cursorState?.firstPoint == null);
                 if (canDragPlace) {
                     dragPlaceState = { startX: mouseEvent.clientX, startY: mouseEvent.clientY, started: false };
                 }

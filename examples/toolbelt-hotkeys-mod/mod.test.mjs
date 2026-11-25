@@ -30,7 +30,7 @@ test("toolbelt-hotkeys implements Plans 1-7 via TrafficityMods.game facade", asy
     let idle = true;
     let undoCalls = 0;
     let redoCalls = 0;
-    let mockGameState = null;
+    let mockCursorState = null;
 
     const fakeSlots = [
         { id: "s1", classList: { contains: () => selectedState.has("road") } },
@@ -54,50 +54,51 @@ test("toolbelt-hotkeys implements Plans 1-7 via TrafficityMods.game facade", asy
         },
     };
 
-    globalThis.window = {
-        TrafficityMods: {
-            bindKey: (combo, handler) => bindings.set(combo, handler),
-            onMouse: (type, handler) => mouseHandlers.set(type, handler),
-            use: (name) => (name === "redo" ? { redo: () => { redoCalls += 1; } } : null),
-            game: {
-                watchToolbelt: (cb) => cb(fakeSlots),
-                getToolbeltSlots: () => fakeSlots,
-                addSlotBadge: (btn, label) => slotBadges.push([btn.id, label]),
-                addButtonHint: (target, label) => buttonHints.push([target, label]),
-                selectToolbeltSlot: (idx) => selectedSlots.push(idx),
-                cycleToolbeltSlot: (delta) => cycledDeltas.push(delta),
-                setSpeed: (mode) => speeds.push(mode),
-                isButtonSelected: (target) => selectedState.has(target),
-                pressButton: (target) => {
-                    pressedButtons.push(target);
-                    if (target === "rectangle-delete") {
-                        if (selectedState.has("rectangle-delete")) selectedState.delete("rectangle-delete");
-                        else {
-                            selectedState.clear();
-                            selectedState.add("rectangle-delete");
-                        }
-                    } else if (target === "traffic-eraser") {
-                        if (selectedState.has("traffic-eraser")) selectedState.delete("traffic-eraser");
-                        else {
-                            selectedState.clear();
-                            selectedState.add("traffic-eraser");
-                        }
-                    }
-                },
-                getCursorMode: () => cursorMode,
-                getUndoApi: () => ({ gameState: mockGameState }),
-                isIdle: () => idle,
-                sendSyntheticMouse: (type, init) => syntheticMouse.push({ type, ...init }),
-                sendSyntheticWheel: (init) => syntheticWheels.push(init),
-                undo: () => {
-                    undoCalls += 1;
-                },
-            },
+    const mockGame = {
+        watchToolbelt: (cb) => cb(fakeSlots),
+        getToolbeltSlots: () => fakeSlots,
+        addSlotBadge: (btn, label) => slotBadges.push([btn.id, label]),
+        addButtonHint: (target, label) => buttonHints.push([target, label]),
+        selectToolbeltSlot: (idx) => selectedSlots.push(idx),
+        cycleToolbeltSlot: (delta) => cycledDeltas.push(delta),
+        setSpeed: (mode) => speeds.push(mode),
+        isButtonSelected: (target) => selectedState.has(target),
+        pressButton: (target) => {
+            pressedButtons.push(target);
+            if (target === "rectangle-delete") {
+                if (selectedState.has("rectangle-delete")) selectedState.delete("rectangle-delete");
+                else {
+                    selectedState.clear();
+                    selectedState.add("rectangle-delete");
+                }
+            } else if (target === "traffic-eraser") {
+                if (selectedState.has("traffic-eraser")) selectedState.delete("traffic-eraser");
+                else {
+                    selectedState.clear();
+                    selectedState.add("traffic-eraser");
+                }
+            }
+        },
+        getCursorMode: () => cursorMode,
+        getCursorState: () => mockCursorState,
+        isIdle: () => idle,
+        sendSyntheticMouse: (type, init) => syntheticMouse.push({ type, ...init }),
+        sendSyntheticWheel: (init) => syntheticWheels.push(init),
+        undo: () => {
+            undoCalls += 1;
         },
     };
 
+    const mockMods = {
+        bindKey: (combo, handler) => bindings.set(combo, handler),
+        onMouse: (type, handler) => mouseHandlers.set(type, handler),
+        use: (name) => (name === "redo" ? { redo: () => { redoCalls += 1; } } : null),
+        game: mockGame,
+    };
+
     try {
-        await import(`./mod.js?t=${Date.now()}`);
+        const { default: setupToolbeltHotkeys } = await import(`./mod.js?t=${Date.now()}`);
+        setupToolbeltHotkeys(mockMods, mockGame);
 
         assert.deepEqual(slotBadges, [["s1", "1"], ["s2", "2"]]);
         assert.deepEqual(buttonHints, [["rectangle-delete", "Q/Del"], ["traffic-eraser", "⇧Del"]]);
@@ -158,7 +159,7 @@ test("toolbelt-hotkeys implements Plans 1-7 via TrafficityMods.game facade", asy
 
         // Plan 6: Left click-and-drag placement in road placement
         cursorMode = "road placement";
-        mockGameState = { cursorMode: { mode: "road placement", startPoint: null } };
+        mockCursorState = { mode: "road placement", startPoint: null };
         mousedown({ button: 0, shiftKey: false, clientX: 10, clientY: 10 });
         mousemove({ clientX: 30, clientY: 10 });
         assert.deepEqual(syntheticMouse.slice(-2), [
@@ -173,8 +174,6 @@ test("toolbelt-hotkeys implements Plans 1-7 via TrafficityMods.game facade", asy
         mousedown({ button: 4, preventDefault() {}, stopImmediatePropagation() {} });
         assert.equal(redoCalls, 1);
     } finally {
-        delete globalThis.window;
         delete globalThis.document;
-        delete globalThis.__trafficityGameState;
     }
 });

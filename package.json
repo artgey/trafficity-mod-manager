@@ -1,6 +1,6 @@
 {
   "name": "trafficity-mod-manager",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Lightweight mod manager, extensible game facade, ASAR patcher, and Qt6 Quick desktop UI for Trafficity",
   "type": "module",
   "scripts": {
@@ -12,6 +12,10 @@
     "fork-mod": "node src/mod-tools.mjs --fork",
     "pack-mod": "node src/mod-tools.mjs --pack",
     "health": "node src/health.mjs",
+    "dev-console": "node src/dev-bridge-cli.mjs --logs",
+    "dev-eval": "node src/dev-bridge-cli.mjs --eval",
+    "logs": "node src/dev-bridge-cli.mjs --file",
+    "mcp": "node src/mcp-server.mjs",
     "typecheck": "tsc -p jsconfig.json --noEmit",
     "test:ui": "./bin/trafficity-mod-manager --self-test",
     "test": "npm run typecheck && node --test test/*.test.mjs examples/*/*.test.mjs",
@@ -22,6 +26,7 @@
     "@electron/asar": "^3.2.18"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
   }
 }
