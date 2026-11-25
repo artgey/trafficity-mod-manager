@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import setupEcoScrubber, {
   buildEcoScrubberExtrusions,
+  computeBuildingScrubStats,
   computeFalloffFactor,
   formatEcoScrubberTooltip,
   resolveScrubStrength,
@@ -35,7 +36,7 @@ test("eco-scrubber manifest and settings.toml schema are valid", () => {
     "falloff_curve",
   ]);
   const vals = extractConfigValues(rawToml);
-  assert.equal(vals.scrub_radius, 225);
+  assert.equal(vals.scrub_radius, 450);
   assert.equal(vals.scrub_strength, "medium");
   assert.equal(vals.scrub_falloff, 0);
 });
@@ -76,7 +77,7 @@ test("scrubPollutionAroundBuildings cleans low/medium in area, preserves pollute
     pollutionGrid: {
       pollutionValues: values,
       getCellCount: () => 5,
-      getCellXFromIndex: (i) => [2, 3, 5, 10, 50][i],
+      getCellXFromIndex: (i) => [2, 1, 5, 10, 50][i],
       getCellYFromIndex: () => 2,
     },
   };
@@ -96,11 +97,31 @@ test("scrubPollutionAroundBuildings cleans low/medium in area, preserves pollute
   assert.equal(values[4], Math.fround(0.75));
 });
 
-test("setupEcoScrubber registers building, cyan selection ring, dynamic tooltip, and pollution diffusion handler", () => {
+test("computeBuildingScrubStats counts scrubbers and formats efficiency up to 1 decimal", () => {
+  const saveState = {
+    buildings: {
+      1: { id: 1, type: "eco-scrubber", footprint: { centerX: 0, centerY: 0 } },
+      2: { id: 2, type: "eco-scrubber", footprint: { centerX: 300, centerY: 0 } },
+      3: { id: 3, type: "house", footprint: { centerX: 50, centerY: 0 } },
+    },
+  };
+  assert.deepEqual(
+    computeBuildingScrubStats(saveState.buildings[3], saveState, { radius: 450, falloff: 0 }),
+    { count: 2, efficiency: 2, formatted: "2x" },
+  );
+  // With falloff 0.5, innerFraction 0.5, scrubber 1 (dist 50 <= 225) = 1.0, scrubber 2 (dist 250) = 1 - 0.5 * (25/225) ~= 0.94 -> 1.9x
+  assert.deepEqual(
+    computeBuildingScrubStats(saveState.buildings[3], saveState, { radius: 450, falloff: 0.5, innerFraction: 0.5, curve: "linear" }),
+    { count: 2, efficiency: 1.9, formatted: "1.9x" },
+  );
+});
+
+test("setupEcoScrubber registers building, cyan selection ring, dynamic tooltip, building view panel, and pollution diffusion handler", () => {
   let registered = null;
   let selectionRing = null;
   let tooltipEntry = null;
   let diffusionHandler = null;
+  let panelProvider = null;
 
   const mods = {
     getConfig: (_id, d) => ({ ...d, quota: 4, scrub_falloff: 0.5, falloff_curve: "quadratic" }),
@@ -108,7 +129,10 @@ test("setupEcoScrubber registers building, cyan selection ring, dynamic tooltip,
   };
   const st = {
     cameraZoom: 1,
-    buildings: { 1: { id: 1, type: "eco-scrubber", footprint: { centerX: 40, centerY: 40 } } },
+    buildings: {
+      1: { id: 1, type: "eco-scrubber", footprint: { centerX: 40, centerY: 40 } },
+      2: { id: 2, type: "house", footprint: { centerX: 40, centerY: 40 } },
+    },
     pollutionGrid: {
       pollutionValues: new Float32Array([0.65]),
       getCellCount: () => 1,
@@ -119,6 +143,7 @@ test("setupEcoScrubber registers building, cyan selection ring, dynamic tooltip,
   const game = {
     setSelectionRadiusRing: (type, opts) => { selectionRing = { type, opts }; },
     addBuildingTooltipLine: (type, text) => { tooltipEntry = { type, text }; },
+    addBuildingViewPanelSection: (fn) => { panelProvider = fn; return () => {}; },
     onPollutionDiffusion: (fn) => { diffusionHandler = fn; return () => {}; },
     getPollutionConfig: () => ({ cellSize: 40 }),
     getBuildingDefinition: () => ({ pollutionOutput: "none" }),
@@ -131,6 +156,8 @@ test("setupEcoScrubber registers building, cyan selection ring, dynamic tooltip,
   assert.equal(selectionRing.opts.color, 0x00e5ff);
   assert.equal(tooltipEntry.type, "eco-scrubber");
   assert.match(tooltipEntry.text, /quadratic falloff/);
+  assert.equal(panelProvider({ building: st.buildings[1], saveState: st }), null);
+  assert.equal(panelProvider({ building: st.buildings[2], saveState: st }).text, "Eco-Scrubbers: 1 (1x)");
 
   diffusionHandler(st.pollutionGrid, {
     saveState: st,
@@ -138,5 +165,5 @@ test("setupEcoScrubber registers building, cyan selection ring, dynamic tooltip,
     getBuildingDefinition: () => ({ pollutionOutput: "none" }),
   });
   assert.equal(st.pollutionGrid.pollutionValues[0], 0);
-  assert.match(formatEcoScrubberTooltip({ scrub_radius: 225, scrub_strength: "medium", scrub_falloff: 0.5, falloff_curve: "quadratic" }), /quadratic falloff/);
+  assert.match(formatEcoScrubberTooltip({ scrub_radius: 450, scrub_strength: "medium", scrub_falloff: 0.5, falloff_curve: "quadratic" }), /quadratic falloff/);
 });

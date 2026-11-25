@@ -9,7 +9,7 @@ label = "Starting Quota"
 description = "Number of Eco-Scrubber towers granted in the toolbar at the start of a city."
 
 [scrub_radius]
-value = 225
+value = 450
 type = "number"
 min = 40
 max = 1000
