@@ -1,0 +1,27 @@
+# Building Satisfaction Telemetry configuration
+
+[show_targets]
+value = true
+type = "boolean"
+label = "Show Target Values"
+description = "Display target percentage next to current satisfaction."
+
+[show_velocity]
+value = true
+type = "boolean"
+label = "Show Velocity / Delta"
+description = "Display rate of change (▲/▼ %/s) for each satisfaction factor."
+
+[show_inactive_factors]
+value = false
+type = "boolean"
+label = "Show Inactive Factors"
+description = "Include factors with negative/unused readings (e.g. visitorAccess on residential buildings)."
+
+[decimals]
+value = 1
+type = "number"
+min = 0
+max = 3
+label = "Decimal Places"
+description = "Number of decimal places shown for satisfaction percentages."

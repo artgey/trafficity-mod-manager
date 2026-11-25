@@ -1,0 +1,9 @@
+{
+  "id": "dev-telemetry",
+  "name": "Building Satisfaction Telemetry",
+  "version": "1.0.0",
+  "modloaderVersion": "1.4.2",
+  "author": "Trafficity Mod Manager",
+  "description": "Displays exact satisfaction sub-scores (current, target, velocity/delta, and color-coded bars) inside the clicked BuildingViewPanel. Disabled by default.",
+  "entry": "mod.js"
+}
