@@ -283,6 +283,11 @@ ApplicationWindow {
                     }
 
                     ActionButton {
+                        text: "Open Logs"
+                        onClicked: backend.openLogsFolder()
+                    }
+
+                    ActionButton {
                         text: "API Docs"
                         onClicked: backend.openApiDocs()
                     }

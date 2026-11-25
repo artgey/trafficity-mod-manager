@@ -35,10 +35,12 @@ echo.
 echo   [1] Patch Game (npm run patch)
 echo   [2] Restore Stock (npm run restore)
 echo   [3] Check Status (npm run status)
-echo   [4] Open API Docs (docs\api.html)
-echo   [5] Exit
+echo   [4] Health Check (npm run health)
+echo   [5] Scaffold New Mod (npm run new-mod)
+echo   [6] Open API Docs (docs\api.html)
+echo   [7] Exit
 echo.
-set /p CHOICE="Select an option (1-5): "
+set /p CHOICE="Select an option (1-7): "
 
 if "%CHOICE%"=="1" (
     call npm run patch
@@ -56,8 +58,19 @@ if "%CHOICE%"=="3" (
     goto menu
 )
 if "%CHOICE%"=="4" (
+    call npm run health
+    pause
+    goto menu
+)
+if "%CHOICE%"=="5" (
+    set /p MOD_ID="Enter new mod ID (e.g. my-cool-mod): "
+    if not "%MOD_ID%"=="" call npm run new-mod -- "%MOD_ID%"
+    pause
+    goto menu
+)
+if "%CHOICE%"=="6" (
     start "" "%~dp0docs\api.html"
     goto menu
 )
-if "%CHOICE%"=="5" exit /b 0
+if "%CHOICE%"=="7" exit /b 0
 goto menu

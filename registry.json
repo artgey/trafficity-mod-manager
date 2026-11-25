@@ -45,5 +45,23 @@
     "author": "Trafficity Mod Manager",
     "description": "Adds a custom Eco-Scrubber Tower building with 2.5D procedural extrusions that actively cleans nearby air pollution around its plot.",
     "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/eco-scrubber-mod.zip"
+  },
+  {
+    "id": "dev-bridge",
+    "name": "Dev Console & Eval Bridge",
+    "version": "1.0.0",
+    "modloaderVersion": "1.4.2",
+    "author": "Trafficity Mod Manager",
+    "description": "Opt-in live external console log stream and interactive JS eval bridge for CLI, agents, and MCP tools. Disabled by default.",
+    "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/dev-bridge-mod.zip"
+  },
+  {
+    "id": "dev-telemetry",
+    "name": "Dev Building Telemetry",
+    "version": "1.0.0",
+    "modloaderVersion": "1.4.2",
+    "author": "Trafficity Mod Manager",
+    "description": "Opt-in developer overlay in BuildingViewPanel showing exact satisfaction factors, targets, velocities, and color-coded progress bars. Disabled by default.",
+    "downloadUrl": "https://github.com/dyri0n/trafficity-mod-manager/releases/latest/download/dev-telemetry-mod.zip"
   }
 ]

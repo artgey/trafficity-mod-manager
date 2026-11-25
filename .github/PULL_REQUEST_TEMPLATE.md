@@ -1,14 +1,10 @@
 ### Submitting a Mod to the Community Registry
 
-1. Host your mod `.zip` on a public **GitHub Release** in your own repository (the `.zip` should contain `mod.json` at its root or inside a single folder).
-2. Add your entry to `registry.json` with:
-   - `id`, `name`, `version`, `author`, `description`
-   - `dependencies` / `optionalDependencies` (if any)
-   - `downloadUrl` (direct `.zip` link from your GitHub Release)
-   - `sha256` (optional but recommended: `sha256sum your-mod.zip`)
-3. Open a Pull Request!
+1. Package your mod locally using `npm run pack-mod <mod-dir>` (or **Pack & Publish** in Mod Studio). This builds `<id>.zip` and prints a ready-to-paste `registry.json` entry with `sha256` and `modloaderVersion`.
+2. Upload `<id>.zip` to a public **GitHub Release** in your repository.
+3. Paste the generated entry into `registry.json` (updating `downloadUrl` to your GitHub Release `.zip` link) and open a Pull Request!
 
 #### Checklist
-- [ ] `mod.json` is valid and `id` is unique in `registry.json`
+- [ ] `mod.json` is valid (`id`, `name`, `version`, `modloaderVersion`) and `id` is unique in `registry.json`
 - [ ] Tested locally with `node --test` (or in-game via `F9`)
-- [ ] `downloadUrl` points to a public GitHub Release `.zip`
+- [ ] `downloadUrl` points to a public GitHub Release `.zip` matching `sha256`

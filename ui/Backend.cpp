@@ -201,7 +201,10 @@ static bool isLoaderCompatible(const QString &requiredRaw, const QString &curren
     if (reqMaj != curMaj) return false;
     const int reqMin = reqParts.value(1).toInt();
     const int curMin = curParts.value(1).toInt();
-    return reqMin <= curMin;
+    if (curMin != reqMin) return curMin > reqMin;
+    const int reqPatch = reqParts.value(2).toInt();
+    const int curPatch = curParts.value(2).toInt();
+    return curPatch >= reqPatch;
 }
 
 static QString computeModCodeHash(const QString &modDir) {
@@ -525,6 +528,13 @@ void Backend::openModsFolder() {
     QDesktopServices::openUrl(QUrl::fromLocalFile(m_modsDir));
 }
 
+void Backend::openLogsFolder() {
+    if (m_modsDir.isEmpty()) return;
+    const QString logsDir = QDir(m_modsDir).filePath(QStringLiteral("logs"));
+    QDir().mkpath(logsDir);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(logsDir));
+}
+
 void Backend::openApiDocs() {
     const QString docsPath = QDir(m_repoRoot).filePath(QStringLiteral("docs/api.html"));
     if (QFile::exists(docsPath)) {
@@ -755,28 +765,35 @@ void Backend::openModSettings(const QString &folderName, const QString &modName)
     if (m_modsDir.isEmpty() || folderName.isEmpty()) return;
     const QString modDir = QDir(m_modsDir).filePath(folderName);
 
-    QProcess proc;
-    proc.setWorkingDirectory(m_repoRoot);
-    proc.start(QStringLiteral("node"), {
+    auto *proc = new QProcess(this);
+    proc->setWorkingDirectory(m_repoRoot);
+    connect(proc, &QProcess::finished, this, [this, proc, folderName, modName](int exitCode, QProcess::ExitStatus) {
+        const QByteArray stdoutData = proc->readAllStandardOutput();
+        proc->deleteLater();
+        if (exitCode != 0) {
+            appendLog(QStringLiteral("Failed to read settings.toml for %1").arg(folderName));
+            return;
+        }
+        const QJsonDocument doc = QJsonDocument::fromJson(stdoutData);
+        if (!doc.isObject()) return;
+        const QJsonArray arr = doc.object().value(QStringLiteral("schema")).toArray();
+        QVariantList list;
+        for (const QJsonValue &v : arr) {
+            if (v.isObject()) list.append(v.toObject().toVariantMap());
+        }
+        m_activeSettingsModFolder = folderName;
+        m_activeSettingsModName = modName.isEmpty() ? folderName : modName;
+        m_activeSettingsSchema = list;
+        emit settingsDialogChanged();
+    });
+    connect(proc, &QProcess::errorOccurred, this, [this, proc, folderName](QProcess::ProcessError) {
+        appendLog(QStringLiteral("Failed to read settings.toml for %1: %2").arg(folderName, proc->errorString()));
+        proc->deleteLater();
+    });
+    proc->start(QStringLiteral("node"), {
         QDir(m_repoRoot).filePath(QStringLiteral("src/mod-tools.mjs")),
         QStringLiteral("--get-settings"), modDir,
     });
-    if (!proc.waitForFinished(5000) || proc.exitCode() != 0) {
-        appendLog(QStringLiteral("Failed to read settings.toml for %1").arg(folderName));
-        return;
-    }
-
-    const QJsonDocument doc = QJsonDocument::fromJson(proc.readAllStandardOutput());
-    if (!doc.isObject()) return;
-    const QJsonArray arr = doc.object().value(QStringLiteral("schema")).toArray();
-    QVariantList list;
-    for (const QJsonValue &v : arr) {
-        if (v.isObject()) list.append(v.toObject().toVariantMap());
-    }
-    m_activeSettingsModFolder = folderName;
-    m_activeSettingsModName = modName.isEmpty() ? folderName : modName;
-    m_activeSettingsSchema = list;
-    emit settingsDialogChanged();
 }
 
 void Backend::saveModSettings(const QString &folderName, const QVariantMap &values) {
@@ -784,19 +801,27 @@ void Backend::saveModSettings(const QString &folderName, const QVariantMap &valu
     const QString modDir = QDir(m_modsDir).filePath(folderName);
     const QString valuesJson = QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(values)).toJson(QJsonDocument::Compact));
 
-    QProcess proc;
-    proc.setWorkingDirectory(m_repoRoot);
-    proc.start(QStringLiteral("node"), {
+    auto *proc = new QProcess(this);
+    proc->setWorkingDirectory(m_repoRoot);
+    connect(proc, &QProcess::finished, this, [this, proc, folderName](int exitCode, QProcess::ExitStatus) {
+        const QByteArray stderrData = proc->readAllStandardError();
+        proc->deleteLater();
+        if (exitCode != 0) {
+            appendLog(QStringLiteral("Failed to save settings.toml: %1").arg(QString::fromUtf8(stderrData)));
+            return;
+        }
+        appendLog(QStringLiteral("Saved settings.toml for %1").arg(folderName));
+        loadModsFromDisk();
+    });
+    connect(proc, &QProcess::errorOccurred, this, [this, proc](QProcess::ProcessError) {
+        appendLog(QStringLiteral("Failed to save settings.toml: %1").arg(proc->errorString()));
+        proc->deleteLater();
+    });
+    proc->start(QStringLiteral("node"), {
         QDir(m_repoRoot).filePath(QStringLiteral("src/mod-tools.mjs")),
         QStringLiteral("--set-settings"), modDir,
         QStringLiteral("--values"), valuesJson,
     });
-    if (!proc.waitForFinished(5000) || proc.exitCode() != 0) {
-        appendLog(QStringLiteral("Failed to save settings.toml: %1").arg(QString::fromUtf8(proc.readAllStandardError())));
-        return;
-    }
-    appendLog(QStringLiteral("Saved settings.toml for %1").arg(folderName));
-    loadModsFromDisk();
 }
 
 void Backend::runHealthCheck() {
@@ -830,15 +855,25 @@ void Backend::applyHealthFix(const QString &fixAction) {
     if (fixAction == QStringLiteral("patch")) {
         patchGame();
     } else if (fixAction == QStringLiteral("sync-types")) {
-        QProcess proc;
-        proc.setWorkingDirectory(m_repoRoot);
-        proc.start(QStringLiteral("node"), {
+        auto *proc = new QProcess(this);
+        proc->setWorkingDirectory(m_repoRoot);
+        connect(proc, &QProcess::finished, this, [this, proc](int exitCode, QProcess::ExitStatus) {
+            proc->deleteLater();
+            if (exitCode == 0) {
+                appendLog(QStringLiteral("Synced mods folder jsconfig.json and TrafficityMods types."));
+            } else {
+                appendLog(QStringLiteral("Failed to sync mods workspace types."));
+            }
+            runHealthCheck();
+        });
+        connect(proc, &QProcess::errorOccurred, this, [this, proc](QProcess::ProcessError) {
+            appendLog(QStringLiteral("Failed to sync mods workspace types: %1").arg(proc->errorString()));
+            proc->deleteLater();
+        });
+        proc->start(QStringLiteral("node"), {
             QDir(m_repoRoot).filePath(QStringLiteral("src/health.mjs")),
             QStringLiteral("--sync-types"),
         });
-        proc.waitForFinished(5000);
-        appendLog(QStringLiteral("Synced mods folder jsconfig.json and TrafficityMods types."));
-        runHealthCheck();
     } else if (fixAction == QStringLiteral("open-mods")) {
         openModsFolder();
     }

@@ -52,6 +52,7 @@ static int runSelfTest(int argc, char *argv[]) {
     modJs.close();
 
     backend.saveModSettings(QStringLiteral("self-mod"), { { QStringLiteral("showBanner"), false } });
+    waitForSignal(&Backend::modsChanged);
     m = findMod(QStringLiteral("self-mod"));
     if (!m.value(QStringLiteral("publishable")).toBool()) {
         qWarning("Self-test failed: edited mod should be publishable");
