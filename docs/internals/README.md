@@ -1,6 +1,6 @@
 # Trafficity Modding Internals & Extension Knowledge Database
 
-> **Tracked Reference (`docs/internals/`)** — Reverse-engineered read-only from shipped Steam build `trafficity@1.0.0+34b3cf6d3f` / `6969441617` (`/home/dyri0n/.local/share/Steam/steamapps/common/Trafficity/resources/app.asar`) and the mod-manager source in this repository.
+> **Tracked Reference (`docs/internals/`)** — Reverse-engineered read-only from shipped Steam build `trafficity@1.0.0+34b3cf6d3f` / `6969441617` (`~/.local/share/Steam/steamapps/common/Trafficity/resources/app.asar`) and the mod-manager source in this repository.
 
 ## Contents
 
@@ -11,6 +11,12 @@
 | [`02-custom-building-reference.md`](./02-custom-building-reference.md) | Detailed documentation for every `CustomBuilding` constructor option and property, exact valid enum values where constrained, Pixi/UI sprite behavior, lifecycle hooks (`onPlace`, `onDelete`, `onSelect`, etc.), and known engine caveats. |
 | [`03-asset-file-injection-internals.md`](./03-asset-file-injection-internals.md) | Complete investigation of Sound (`@pixi/sound` SFX & ambient noise), Music (`HTMLAudioElement`), Images, Videos (`.mp4`), Fonts (`.ttf` / `@font-face`), Styles (`.css`), Saves/JSON (`/dev-saves`, `/api/player-saves`), and Worker scripts across `app.asar`, `electron/static-server.js`, `src/mod-api.cjs`, and `runtime/loader.js`. |
 | [`04-levelup-progression-internals.md`](./04-levelup-progression-internals.md) | Dissection of City Level / Development Pack progression (`aigC5`, `a3oY4`, `9colC`, `jgEEo`, `bCcpU`): eligibility gates, budget/tile/building unlock effects, worker sync, and how mods can hook or customize triggers and rewards. |
+| [`05-reload-binary-screen.md`](./05-reload-binary-screen.md) | Diagnosis of why **Reload Game** sometimes displays raw binary symbols (stale in-memory Electron `app.asar` offset table when `npm run patch` overwrites `app.asar` while the game is running). |
+| [`06-redo-buildings.md`](./06-redo-buildings.md) | Diagnosis of why Redo only works on roads and not buildings (`f5Ojv` `"buildings placed"` / `"buildings deleted"` sub-records vs `redo-mod` only handling `"confirm"`). |
+| [`07-pollution-propagation-scrubber.md`](./07-pollution-propagation-scrubber.md) | Confirmation of concentric center-outward pollution diffusion (`5x7Vi` + `gs8fX`) and why `eco-scrubber` zeroing cells in-place stops factory emissions from propagating past its radius. |
+| [`08-multilane-road-lag.md`](./08-multilane-road-lag.md) | Diagnosis of remaining multilane-to-multilane road connection lag (`placementCache` key misses on `money` & unquantized `endPoint`, plus `h0N8S` / `WppSZ` / `gSON2` / `E71eU` overlap & glue-along recovery). |
+| [`09-traffic-lights-internals.md`](./09-traffic-lights-internals.md) | API mapping of traffic light status (`5TAGW` `ParallelIntersectionMetadata`, `dcoVe` `shouldLaneShowAmber` / `canSourceLaneProceedThroughIntersection`, phase tick loop, and proposed `TrafficityMods.game` helper). |
+| [`10-road-placement-constraints.md`](./10-road-placement-constraints.md) | Complete reference of road placement geometry constants, ramp/slope limits, turn/approach angles, junction chop-off formulas, glue-along/traffic-light-arm guards, and rejection reasons (`bTgKI`, `dMMfs`, `8w78C`, `h0N8S`, `E71eU`, `aIdtw`). |
 
 ---
 

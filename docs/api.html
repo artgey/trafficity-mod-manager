@@ -254,7 +254,7 @@
   <div class="layout">
     <aside>
       <div class="brand">Trafficity Mod Manager</div>
-      <div class="subtitle">API Reference v1.3.0 (Build 26770952)</div>
+      <div class="subtitle">API Reference v1.4.2</div>
       <nav>
         <div class="nav-group">Getting Started</div>
         <ul>
@@ -448,9 +448,9 @@ mods.use("redo")?.redo();</code></pre>
       </div>
 
       <div class="method-card">
-        <div class="method-sig">TrafficityMods.addOverlay(id, htmlOrNode)</div>
+        <div class="method-sig">TrafficityMods.addOverlay(id, htmlOrNode) -&gt; HTMLDivElement | null</div>
         <p>
-          Mounts or updates a persistent <code>&lt;div id="tmod-overlay-&lt;id&gt;"&gt;</code> element in <code>document.body</code>.
+          Mounts or updates a persistent <code>&lt;div id="tmod-overlay-&lt;id&gt;"&gt;</code> element in <code>document.body</code> with automatic mouse/wheel event isolation. Returns the host element when mounted synchronously (or <code>null</code> if deferred until <code>DOMContentLoaded</code>).
         </p>
       </div>
 
@@ -540,6 +540,11 @@ mods.use("redo")?.redo();</code></pre>
             <td><code>game.getCursorMode()</code></td>
             <td><code>string | null</code></td>
             <td>Returns Trafficity's active <code>gameState.cursorMode.mode</code> (e.g. <code>"default"</code>, <code>"road placement"</code>, <code>"grid"</code>, <code>"rectangle delete"</code>, <code>"traffic eraser"</code>, <code>"place roundabout"</code>, <code>"building placement"</code>).</td>
+          </tr>
+          <tr>
+            <td><code>game.getCursorState()</code></td>
+            <td><code>TrafficityCursorState | null</code></td>
+            <td>Returns the full active <code>gameState.cursorMode</code> object (including <code>mode</code>, <code>startPoint</code>, <code>firstPoint</code>, <code>buildingDefinitionName</code>).</td>
           </tr>
           <tr>
             <td><code>game.isIdle()</code></td>
@@ -668,9 +673,14 @@ mods.use("redo")?.redo();</code></pre>
             <td>Runs <code>handler(pollutionGrid, { saveState, cellSize, getBuildingDefinition })</code> after each pollution diffusion step.</td>
           </tr>
           <tr>
+            <td><code>game.hookRoadSnap(factory)</code></td>
+            <td><code>() =&gt; void</code></td>
+            <td>Wraps road snapping (<code>getNearestLaneCreationPoint</code>) with a composable multi-mod wrapper factory. Returns an unsubscribe function.</td>
+          </tr>
+          <tr>
             <td><code>game.hookRoundaboutPlacement(factory)</code> / <code>game.hookRoadPlacement(factory)</code></td>
-            <td><code>void</code></td>
-            <td>Wraps roundabout or road placement evaluation cleanly without looking up internal module IDs.</td>
+            <td><code>() =&gt; void</code></td>
+            <td>Wraps roundabout or road placement evaluation with composable multi-mod wrapper factories. Returns an unsubscribe function.</td>
           </tr>
           <tr>
             <td><code>game.requireModule(nameOrId)</code></td>

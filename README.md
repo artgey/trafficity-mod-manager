@@ -41,12 +41,13 @@ Other CLI commands:
 npm run status                         # Inspect game detection, release, and hook status (JSON)
 npm run health                         # Run full environment, ASAR, mod, and dependency health check
 npm run restore                        # Revert resources/app.asar from app.asar.bak
-npm run new-mod <id>                   # Scaffold a new mod folder (mod.json, mod.js, settings.toml, types.d.ts)
+npm run new-mod <id>                   # Scaffold a new mod folder (mod.json, mod.js, mod.test.mjs, settings.toml, types.d.ts)
 npm run fork-mod <dir-or-id>           # Fork a mod with forkedFrom/lineage traceback metadata
 npm run pack-mod <mod-dir>             # Package a mod into <id>.zip and print SHA-256 + registry.json entry
 npm run typecheck                      # Run tsc -p jsconfig.json --noEmit
 npm test                               # Run typecheck plus all unit/integration tests
 npm run test:ui                        # Run Qt6 Backend headless self-test
+npm run logs                           # Read passive session log (mods/logs/latest.log); add -- --crashes for crash snapshots
 node src/patch.mjs --game-dir <path>   # Override auto-detected Steam install directory
 ```
 
@@ -60,6 +61,9 @@ Environment variable overrides:
 - **`redo-mod`:** Standalone Redo stack hooking Trafficity's undo journal with `"placeRoad"` SFX, `Ctrl+Y` / `Ctrl+Shift+Z`, and `"redo"` service registration.
 - **`snap-perf-fix-mod`:** Memoizes per-frame road snap queries and bounds the 60-step midpoint overlap loop to eliminate roundabout/autoconnect placement lag.
 - **`measuring-grid-mod`:** Togglable world measuring grid (`Alt+G`) calibrated to road step spacing (`3u`) and lane width (`20u`), adjustable granularity (`[` / `]`), and optional road-point grid snapping (`Alt+S`).
+- **`eco-scrubber-mod`:** Custom `"eco-scrubber"` air-purifier tower registered via `TrafficityMods.buildings.register(...)` with 2.5D procedural extrusions, cyan dashed preview/selection radius ring, dynamic tooltip, and configurable area pollution scrubbing in `settings.toml`.
+- **`dev-bridge-mod`:** Opt-in (disabled by default) live external console log stream (`npm run dev-console -- --follow`), interactive JS eval (`npm run dev-eval "game.getCameraState()"`), and zero-dependency stdio MCP server (`npm run mcp`) for CLI/agent debugging without DevTools.
+- **`dev-telemetry-mod`:** Opt-in (disabled by default) developer telemetry section inside `BuildingViewPanel` showing exact overall satisfaction and factor breakdowns (`current`, `target`, `velocity`, and color-coded progress bars).
 
 ## Hosting & Submitting Community Mods (GitHub Releases)
 

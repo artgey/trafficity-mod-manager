@@ -133,3 +133,35 @@ This document maps **every functional subsystem in Trafficity**, tracks **how mu
 1. **Terrain Queries (`mods.terrain`):** `getTerrainAt(worldX, worldY)` via `70dcm`.
 2. **Traffic & Simulation Controls (`mods.traffic`):** Read live car counts/congestion (`gy5Fo`, `1Lwfl`), hook car colors/speeds (`jwrek`, `84pTe`), and inspect/purge vehicles.
 3. **Road & Junction Helpers (`mods.roads`):** Read-only inspection of `laneSections`, `junctions`, `intersections`, and helper wrappers for common road/traffic-light queries.
+
+---
+
+## 4. Developer Quality & Audit Roadmap
+
+Engineering quality audits to harden the patcher, runtime loader, desktop companion app, and modding ecosystem:
+
+- [x] **Developer Experience (DX) & Strict Type Enforcement Audit** *(Completed)*
+  - Enabled `"checkJs": true` + `"strict": true` (`@types/node`) across `src/**/*.mjs`, `src/**/*.cjs`, `runtime/**/*.js`, `examples/**/*.js`, and `types/**/*.d.ts` with zero explicit `any`s.
+  - Made `hookRoadSnap`, `hookRoadPlacement`, `hookRoundaboutPlacement`, and `addBuildingTooltipLine` multi-mod composable; added `game.getCursorState()`, unsubscribe handles, `Cache-Control: no-store`, starter `mod.test.mjs`, PR/release CI gates, and async Qt6 UI `QProcess` handlers.
+
+- [ ] **1. Security & Trust-Boundary Audit**
+  - **ZIP & Installer (`src/registry.mjs`, `src/mod-tools.mjs`):** Enforce uncompressed-size / zip-bomb limits in `extractZipBuffer`, guard symlink escapes, populate `sha256` hashes in `registry.json`, and review arbitrary-URL install prompts.
+  - **Local HTTP Server (`src/mod-api.cjs`):** Validate `Origin`/`Host` headers on `POST /api/mods/toggle` & `/api/mods/config`, verify path-traversal edge cases, and audit `innerHTML` / XSS surfaces in the `F9` drawer (`runtime/loader.js`).
+  - **Desktop App (`ui/Backend.cpp`):** Sanitize paths/URLs before `QDesktopServices::openUrl` and review `QProcess` argument handling.
+
+- [ ] **2. Steam-Update Resilience & Fragility Audit**
+  - Audit all 9 regex hooks in `src/patch.mjs`, all `ROUTER_MODULES` + `WORKER_MODULES` Parcel IDs in `runtime/loader.js`, and DOM selectors (`.road-toolbar-buttons-row`, `[data-tutorial-target]`, `#pixi`) for fail-fast vs. silent breakage on game updates.
+  - Extend `verifyRouterHooks` / `npm run health` to verify `ROUTER_MODULES` and `WORKER_MODULES` existence against the live `app.asar`.
+
+- [ ] **3. Runtime Performance & Memory Leak Audit**
+  - **In-game loader & mods:** Revoke `URL.createObjectURL` blobs in `PatchedTrafficityWorker`, scope `watchToolbelt`'s `document.body` `MutationObserver`, skip redundant `measuring-grid` `requestAnimationFrame` redraws when the camera is stationary, and profile `eco-scrubber`'s per-cell diffusion loop.
+  - **Qt6 UI:** Move `computeModCodeHash` off the GUI thread in `Backend::loadModsFromDisk()` and audit `QFileSystemWatcher` churn.
+
+- [ ] **4. Cross-Platform & Failure-Mode Audit (Windows, Linux, Proton/Wine)**
+  - Handle patching while Trafficity is running (locked `app.asar` on Windows), spaces/Unicode in Steam paths, corrupted/missing `app.asar.bak`, offline registry fallback, and mod load-error isolation so one broken mod cannot break others.
+
+- [ ] **5. Over-Engineering, Duplication & Dead-Code Audit**
+  - Deduplicate shared logic between C++ and JS (e.g., `computeModCodeHash` implemented in both `ui/Backend.cpp` and `src/registry.mjs`), prune unused exports/files, and reconcile doc-vs-feature drift (e.g., inline `settings.toml` controls in the `F9` drawer).
+
+- [ ] **6. UI / UX & Feature-Parity Audit (`ui/Main.qml` & `F9` Drawer)**
+  - Audit `ui/Main.qml` and the in-game `F9` drawer for missing workflows (such as inline `settings.toml` editing in `F9`), error feedback, keyboard accessibility, and responsive layout edge cases.

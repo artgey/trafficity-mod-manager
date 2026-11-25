@@ -20,7 +20,7 @@ my-mod/
   "id": "my-mod",
   "name": "My Mod",
   "version": "1.0.0",
-  "modloaderVersion": "1.4.1",
+  "modloaderVersion": "1.4.2",
   "author": "You",
   "description": "What the mod does.",
   "dependencies": [],
@@ -57,7 +57,7 @@ export default function initializeMod(modApi, game) {
 
 - **`modApi.bindKey(combo, handler)`**
   - *What it represents:* A capture-phase keyboard shortcut registry attached to `window`.
-  - *What it does:* Intercepts key presses before Trafficity's own handlers run, ignoring editable inputs (`<input>`, `<textarea>`) and synthetic keys. Returning anything other than `false` consumes the key so the base game won't also react; returning `false` lets Trafficity handle it natively.
+  - *What it does:* Intercepts key presses before Trafficity's own handlers run, ignoring editable inputs (`<input>`, `<textarea>`) and synthetic keys. Returning anything other than `false` consumes the key so the base game won't also react; returning `false` lets Trafficity handle it natively. Returns an unsubscribe function `() => void`.
   - *How to use it:*
     ```js
     modApi.bindKey("Alt+1", () => game.setSpeed("pause"));
@@ -66,7 +66,7 @@ export default function initializeMod(modApi, game) {
 
 - **`modApi.onMouse(type, handler, options)`**
   - *What it represents:* A capture-phase pointer/mouse/wheel listener (`"mousedown"`, `"mousemove"`, `"mouseup"`, `"wheel"`, `"contextmenu"`).
-  - *What it does:* Fires before Trafficity's canvas listeners and automatically skips synthetic events dispatched by `game.sendSyntheticMouse` / `game.sendSyntheticWheel` so mods never trigger their own remaps in a loop.
+  - *What it does:* Fires before Trafficity's canvas listeners and automatically skips synthetic events dispatched by `game.sendSyntheticMouse` / `game.sendSyntheticWheel` so mods never trigger their own remaps in a loop. Returns an unsubscribe function `() => void`.
   - *How to use it:*
     ```js
     modApi.onMouse("wheel", (wheelEvent) => {
@@ -123,9 +123,9 @@ export default function initializeMod(modApi, game) {
 - **`game.*` helpers**
   - *What they represent:* A stable wrapper over Trafficity's DOM toolbar, camera/world projection, audio, and internal Parcel modules.
   - *What they do:*
-    - **Toolbar & actions:** `pressButton`, `isButtonSelected`, `getToolbeltSlots`, `selectToolbeltSlot`, `cycleToolbeltSlot`, `watchToolbelt`, `addButtonHint`, `setSpeed`, `undo`, `cancel`, `playSfx`.
-    - **State, building & environment helpers:** `getCursorMode`, `isIdle`, `getCameraState`, `worldToScreen`, `screenToWorld`, `getConstants`, `getZoomAwareStrokeWidth`, `createDashedCircle`, `getBuildingDefinition`, `getPollutionConfig`, `setSelectionRadiusRing`, `addBuildingTooltipLine`, `onPollutionDiffusion`, `getGameRelease`.
-    - **Synthetic input & advanced internals:** `sendSyntheticMouse`, `sendSyntheticWheel`, `getUndoApi`, `getSnapApi`, `configureSnapSearch`, `hookRoundaboutPlacement`, `hookRoadPlacement`, `MODULES`, `requireModule`, `requireRouterModule`.
+    - **Toolbar & actions:** `pressButton`, `isButtonSelected`, `getToolbeltSlots`, `selectToolbeltSlot`, `cycleToolbeltSlot`, `watchToolbelt`, `addSlotBadge`, `addButtonHint`, `setSpeed`, `undo`, `cancel`, `playSfx`.
+    - **State, building & environment helpers:** `getCursorMode`, `getCursorState`, `isIdle`, `getCameraState`, `worldToScreen`, `screenToWorld`, `getConstants`, `getZoomAwareStrokeWidth`, `createDashedCircle`, `getBuildingDefinition`, `getPollutionConfig`, `setSelectionRadiusRing`, `addBuildingTooltipLine`, `onPollutionDiffusion`, `getGameRelease`.
+    - **Synthetic input & advanced internals:** `sendSyntheticMouse`, `sendSyntheticWheel`, `getUndoApi`, `getSnapApi`, `configureSnapSearch`, `hookRoadSnap`, `hookRoundaboutPlacement`, `hookRoadPlacement`, `MODULES`, `requireModule`, `requireRouterModule`.
   - *Typed module lookup (`game.requireModule`):* Prefer the high-level `game.*` helpers above for common tasks. When you do need raw module exports, `game.requireModule("CAMERA")` is fully typed in `types/trafficity-mods.d.ts` (`TrafficityModuleMap`). See [`docs/api.html`](docs/api.html#modules) and [`docs/internals/README.md`](docs/internals/README.md).
 
 - **`modApi.buildings`** (`CustomBuilding`, `register`, `get`, `list`)
@@ -177,22 +177,21 @@ We recommend starting with `modApi` and `game.*` because they are the simplest, 
 ## 3. Example Mods Walkthrough
 
 - **[`examples/toolbelt-hotkeys-mod`](examples/toolbelt-hotkeys-mod/mod.js)**:
-  - Uses `game.watchToolbelt(...)` + `game.addButtonHint(...)` to annotate toolbar buttons.
+  - Uses `game.watchToolbelt(...)`, `game.addSlotBadge(...)`, `game.addButtonHint(...)`, and `game.getCursorState()`.
   - Reads configurable keybindings from [`settings.toml`](examples/toolbelt-hotkeys-mod/settings.toml) via `modApi.getConfig("toolbelt-hotkeys")`.
   - Binds `1`–`0`, `Alt+1`/`2`/`3`, `q`, `e` (conditional pass-through), and mouse wheel/drag/side-button shortcuts.
   - Consumes `modApi.use("redo")` when `redo-mod` is enabled.
-  - Extends `TrafficityGameFacade` in [`types.d.ts`](examples/toolbelt-hotkeys-mod/types.d.ts) with `addSlotBadge`.
 - **[`examples/redo-mod`](examples/redo-mod/mod.js)**:
   - Waits for `game.on("ready", ...)` and reads `game.getUndoApi()` to wrap `applyUndoSubRecord` / `undoLastAction` and maintain a Redo stack.
   - Plays `"placeRoad"` SFX via `game.playSfx(...)` and exposes `{ redo, canRedo, clear }` via `modApi.provide("redo", ...)`.
   - Declares its service type in [`types.d.ts`](examples/redo-mod/types.d.ts) so dependent mods get autocomplete on `modApi.use("redo")`.
 - **[`examples/measuring-grid-mod`](examples/measuring-grid-mod/mod.js)**:
-  - Uses `game.on("ready" / "cursorModeChange", ...)` and reads `game.getCameraState()` and `game.getConstants()` (`laneWidth`, `lanePointSpacing`) to render a world-aligned grid canvas.
-  - Mounts a HUD whose mouse/wheel events call `e.stopPropagation()` so clicking HUD buttons never triggers road placement.
+  - Uses `game.hookRoadSnap(...)`, `game.getCameraState()`, and `game.getConstants()` (`laneWidth`, `lanePointSpacing`) to render a world-aligned grid canvas and optional grid snap.
+  - Mounts its HUD via `modApi.addOverlay(...)` so clicking HUD buttons never triggers road placement.
 - **[`examples/snap-perf-fix-mod`](examples/snap-perf-fix-mod/mod.js)**:
-  - Uses `game.on("ready", ...)` and `game.configureSnapSearch({ maxSteps, stride, suppressLog })` alongside `game.getSnapApi()` (`aYVZj`), `8lnVn` (roundabout placement), and `hkRbw` (road-to-roundabout placement) memoization.
+  - Uses `game.configureSnapSearch({ maxSteps, stride, suppressLog })` alongside composable `game.hookRoadSnap(...)`, `game.hookRoundaboutPlacement(...)`, and `game.hookRoadPlacement(...)` LRU memoization.
 - **[`examples/eco-scrubber-mod`](examples/eco-scrubber-mod/mod.js)**:
-  - Registers a custom `"eco-scrubber"` building via `modApi.buildings.register(...)` with 2.5D cylindrical/terraced extrusions, configurable `[section]` settings in [`settings.toml`](examples/eco-scrubber-mod/settings.toml), calibrated area-only pollution scrubbing (`gs8fX`), a cyan dashed preview/selection ring (`eqevD`), and a dynamic 2-line toolbar tooltip (`eAKuV`).
+  - Registers a custom `"eco-scrubber"` building via `modApi.buildings.register(...)` with 2.5D cylindrical/terraced extrusions, configurable `[section]` settings in [`settings.toml`](examples/eco-scrubber-mod/settings.toml), calibrated area-only pollution scrubbing (`game.onPollutionDiffusion`), a cyan dashed preview/selection ring (`game.setSelectionRadiusRing`), and a dynamic 2-line toolbar tooltip (`game.addBuildingTooltipLine`).
 
 ## 4. `settings.toml`, Scaffolding, Forking & Packaging
 

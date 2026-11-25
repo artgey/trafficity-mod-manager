@@ -122,3 +122,20 @@ This file documents the observed architecture of **Trafficity** (Steam App ID `5
 - **`docs/api.html` & `MODDING.md`:** Standalone HTML API reference (no emojis, no external dependencies) and mod-authoring guide.
 - **Tests:** Run `npm test` (`tsc -p jsconfig.json --noEmit` + `node --test test/*.test.mjs examples/*/*.test.mjs`) and `npm run test:ui` (`./bin/trafficity-mod-manager --self-test`).
 - **Game Keybindings Reference:** See [`GAME_BINDINGS.md`](GAME_BINDINGS.md).
+
+## Live Inspection Command Map (`dev-bridge`)
+
+When `dev-bridge` is enabled in the running game, prefer `npm run dev-console` / `npm run dev-eval` (or the `npm run mcp` server) instead of asking the user to copy/paste snippets into DevTools:
+
+- **Tail live game/mod console logs:**
+  - `npm run dev-console -- --tail 50` (recent lines) or `npm run dev-console -- --follow` (stream)
+- **Read passive disk & crash logs (`mods/logs/`, works even after a crash or with `dev-bridge` off):**
+  - `npm run logs -- --tail 80` (`latest.log`) or `npm run logs -- --crashes` (latest `crash-*.log` snapshot)
+- **Camera & world-space cursor coordinates:**
+  - `npm run dev-eval "game.getCameraState()"` (also shows `cursorWorldX` / `cursorWorldY` if present or combine with mouse hit-testing)
+- **Building under cursor / selected building & exact satisfaction:**
+  - `npm run dev-eval "(() => { const gs = game.getGameState(); const id = gs?.selectedBuildingId ?? Object.values(gs?.saveState?.buildings || {})[0]?.id; return id ? { id, satisfaction: game.getBuildingSatisfaction(id) } : null; })()"`
+- **Sample `pollutionGrid` around a building (e.g. `eco-scrubber`):**
+  - `npm run dev-eval "(() => { const gs = game.getGameState(); const g = gs.saveState.pollutionGrid; const s = Object.values(gs.saveState.buildings).find(b => b.type === 'eco-scrubber'); if (!s) return null; const cx = Math.floor(s.footprint.centerX / 80), cy = Math.floor(s.footprint.centerY / 80), w = g.getGridWidth(); return { cell: [cx, cy], value: g.pollutionValues[cy * w + cx] }; })()"`
+- **Inspect Router modules (`game.MODULES`) without hardcoding hashes:**
+  - `npm run dev-eval "Object.fromEntries(Object.entries(game.MODULES).map(([k, v]) => [k, Object.keys(game.requireModule(k) || {})]))"`
