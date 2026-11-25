@@ -1706,7 +1706,7 @@
 
     /** @type {TrafficityModsApi} */
     const api = {
-        version: "1.4.2",
+        version: "1.4.3",
         game,
         buildings: buildingsApi,
         extendGame: /** @type {TrafficityModsApi["extendGame"]} */ ((/** @type {Record<string, unknown>} */ methods) => {

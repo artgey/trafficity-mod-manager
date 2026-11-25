@@ -2,7 +2,7 @@
   "id": "toolbelt-hotkeys",
   "name": "Toolbelt Hotkeys & Control Enhancements",
   "version": "2.0.0",
-  "modloaderVersion": "1.4.2",
+  "modloaderVersion": "1.4.3",
   "author": "Trafficity Mod Manager",
   "description": "1-9/0 toolbelt slots, wheel cycling + Ctrl+scroll zoom, Q toggle deletion, Shift+Del traffic eraser, context-aware E property shift, right-click idle pan, Shift+right-click delete, click-and-drag placement, Alt+1/2/3 speed, and Mouse Back/Forward Undo/Redo.",
   "optionalDependencies": ["redo-mod"],

@@ -25,13 +25,13 @@ test("toJsonSafe handles circular objects, Errors, and TypedArrays", () => {
 
 test("evaluateSnippet evaluates expressions and async statements with mods & game", async () => {
     const mockGame = { getGameRelease: () => "trafficity@test" };
-    const mockMods = { version: "1.4.2", game: mockGame };
+    const mockMods = { version: "1.4.3", game: mockGame };
 
     const expr = await evaluateSnippet("game.getGameRelease()", mockMods, mockGame);
     assert.deepEqual(expr, { ok: true, result: "trafficity@test" });
 
     const stmt = await evaluateSnippet("const v = mods.version; return v;", mockMods, mockGame);
-    assert.deepEqual(stmt, { ok: true, result: "1.4.2" });
+    assert.deepEqual(stmt, { ok: true, result: "1.4.3" });
 
     const fail = await evaluateSnippet("throw new Error('bad')", mockMods, mockGame);
     assert.equal(fail.ok, false);

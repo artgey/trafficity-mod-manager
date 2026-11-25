@@ -53,7 +53,7 @@ export const handleMcpRequest = async (req) => {
             result: {
                 protocolVersion: "2024-11-05",
                 capabilities: { tools: {} },
-                serverInfo: { name: "trafficity-dev-bridge", version: "1.4.2" },
+                serverInfo: { name: "trafficity-dev-bridge", version: "1.4.3" },
             },
         };
     }

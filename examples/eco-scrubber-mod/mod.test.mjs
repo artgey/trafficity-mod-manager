@@ -21,7 +21,7 @@ test("eco-scrubber manifest and settings.toml schema are valid", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "mod.json"), "utf8"));
   assert.equal(manifest.id, "eco-scrubber");
   assert.equal(manifest.entry, "mod.js");
-  assert.equal(manifest.modloaderVersion, "1.4.2");
+  assert.equal(manifest.modloaderVersion, "1.4.3");
 
   const rawToml = fs.readFileSync(path.join(__dirname, "settings.toml"), "utf8");
   const schema = extractSettingsSchema(rawToml);

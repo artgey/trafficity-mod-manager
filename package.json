@@ -1,6 +1,6 @@
 {
   "name": "trafficity-mod-manager",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Lightweight mod manager, extensible game facade, ASAR patcher, and Qt6 Quick desktop UI for Trafficity",
   "type": "module",
   "scripts": {

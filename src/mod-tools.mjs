@@ -146,8 +146,8 @@ export const scaffoldMod = async ({
 
     const packageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
     const modloaderVersion = fs.existsSync(packageJsonPath)
-        ? JSON.parse(await fsp.readFile(packageJsonPath, "utf8")).version || "1.4.2"
-        : "1.4.2";
+        ? JSON.parse(await fsp.readFile(packageJsonPath, "utf8")).version || "1.4.3"
+        : "1.4.3";
 
     await fsp.mkdir(modDir, { recursive: true });
     const displayName = String(name || "").trim() || cleanId;

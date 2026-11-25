@@ -2,7 +2,7 @@
   "id": "snap-perf-fix",
   "name": "Roundabout & Road Snap Lag Fix",
   "version": "1.0.0",
-  "modloaderVersion": "1.4.2",
+  "modloaderVersion": "1.4.3",
   "author": "Trafficity Mod Manager",
   "description": "Eliminates frame drops when connecting roads to roundabouts or autoconnecting by memoizing snap queries and bounding the 60-step midpoint overlap loop.",
   "entry": "mod.js"

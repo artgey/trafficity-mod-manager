@@ -20,7 +20,7 @@ my-mod/
   "id": "my-mod",
   "name": "My Mod",
   "version": "1.0.0",
-  "modloaderVersion": "1.4.2",
+  "modloaderVersion": "1.4.3",
   "author": "You",
   "description": "What the mod does.",
   "dependencies": [],
